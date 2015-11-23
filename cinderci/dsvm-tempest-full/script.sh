@@ -125,8 +125,8 @@ function post_devstack_hook {
     sudo sed -i 's/default_volume_type = lvmdriver-1/default_volume_type = local/g' /etc/cinder/cinder.conf
     # GET MITAKA DRIVER FROM UNSTABLE
     cd /opt/OpenvStorage
-    wget https://raw.githubusercontent.com/openvstorage/framework-cinder-plugin/master/cinder-volume-driver/mitaka/openvstorage.py 
-    cp /opt/OpenvStorage/openvstorage.py /opt/stack/new/cinder/cinder/volume/drivers/openvstorage.py
+    sudo wget https://raw.githubusercontent.com/openvstorage/framework-cinder-plugin/master/cinder-volume-driver/mitaka/openvstorage.py 
+    sudo cp /opt/OpenvStorage/openvstorage.py /opt/stack/new/cinder/cinder/volume/drivers/openvstorage.py
     sudo python ${WORKSPACE}/integrationtests/cinderci/dsvm-tempest-full/add_vpool.py 2>&1 | sudo tee -a /var/log/ovs_setup.log
    
     # CONFIGURE TEMPEST
