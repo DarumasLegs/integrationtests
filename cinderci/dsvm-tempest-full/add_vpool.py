@@ -34,6 +34,8 @@ for sr in StorageRouterList.get_storagerouters():
         print('>>', disk.name, disk.size)
         for partition in disk.partitions:
             print('>>>', partition.path, partition.size)
+            if partition.path == '/dev/vda1':
+                partition.size = 85888373760
             for role in [DiskPartition.ROLES.DB, DiskPartition.ROLES.SCRUB,
                          DiskPartition.ROLES.READ, DiskPartition.ROLES.WRITE]:
                 partition.roles.append(role)
