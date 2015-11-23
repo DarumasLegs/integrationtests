@@ -121,6 +121,8 @@ function post_devstack_hook {
     # ADD VPOOL
     export PYTHONPATH="${PYTHONPATH}:/opt/OpenvStorage:/opt/OpenvStorage/webapps"
     export OS_TEST_TIMEOUT=0
+    # make local the default volume type
+    sudo sed -i 's/default_volume_type = lvmdriver-1/default_volume_type = local/g' /etc/cinder/cinder.conf
     sudo python ${WORKSPACE}/integrationtests/cinderci/dsvm-tempest-full/add_vpool.py 2>&1 | sudo tee -a /var/log/ovs_setup.log
    
     # CONFIGURE TEMPEST
@@ -128,14 +130,10 @@ function post_devstack_hook {
     sudo sed -i 's/build_timeout = 196/build_timeout = 600/g' /opt/stack/new/tempest/etc/tempest.conf
     sudo sed -i '/\[volume\]/a storage_protocol=OVS' /opt/stack/new/tempest/etc/tempest.conf
     sudo sed -i '/\[volume\]/a vendor_name="Open vStorage"' /opt/stack/new/tempest/etc/tempest.conf
-    sudo sed -i '/\[volume\]/a backend1_name=lvmdriver-1' /opt/stack/new/tempest/etc/tempest.conf
-    sudo sed -i '/\[volume\]/a backend2_name=local' /opt/stack/new/tempest/etc/tempest.conf
+    sudo sed -i '/\[volume\]/a backend2_name=lvmdriver-1' /opt/stack/new/tempest/etc/tempest.conf
+    sudo sed -i '/\[volume\]/a backend1_name=local' /opt/stack/new/tempest/etc/tempest.conf
     sudo sed -i '/\[volume-feature-enabled\]/a multi_backend=True' /opt/stack/new/tempest/etc/tempest.conf
     sudo sed -i '/\[volume\]/a volume_size=4' /opt/stack/new/tempest/etc/tempest.conf
-
-    # CONFIGURE CINDER
-    sudo sed -i 's/default_volume_type = lvmdriver-1/default_volume_type = local/g' /etc/cinder/cinder.conf
-    sudo sed -i 's/enabled_backends = lvmdriver-1, local/enabled_backends = local/g' /etc/cinder/cinder.conf
 
     sudo ps aux | grep volumedriver | sudo tee -a /var/log/ovs_setup.log
     sudo cat /etc/cinder/cinder.conf | sudo tee -a /var/log/ovs_setup.log
@@ -154,7 +152,7 @@ function post_devstack_hook {
 export -f post_devstack_hook
 
 export DEVSTACK_GATE_TEMPEST_ALL=1
-export CINDER_ENABLED_BACKENDS="lvmdriver-1,local"
+export CINDER_ENABLED_BACKENDS="local,lvmdriver-1"
 export TEMPEST_VOLUME_DRIVER=openvstorage
 export TEMPEST_VOLUME_VENDOR="Open vStorage"
 export TEMPEST_STORAGE_PROTOCOL=OVS
