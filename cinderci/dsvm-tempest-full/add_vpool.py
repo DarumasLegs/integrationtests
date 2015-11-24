@@ -7,7 +7,8 @@ from ovs.dal.hybrids.mgmtcenter import MgmtCenter
 from ovs.dal.hybrids.diskpartition import DiskPartition
 from ovs.dal.lists.storagerouterlist import StorageRouterList
 from ovs.lib.storagerouter import StorageRouterController
-from ovs.extensions.hypervisor.mgmtcenters.management.openstack_mgmt import OpenStackManagement
+from ovs.lib.mgmtcenter import MgmtCenterController
+#from ovs.extensions.hypervisor.mgmtcenters.management.openstack_mgmt import OpenStackManagement
 
 
 pmachine = System.get_my_storagerouter().pmachine
@@ -26,8 +27,10 @@ IP = check_output("""ip a l dev eth0 | grep "inet " | awk '{split($0,a," "); spl
 mgmt_center.save()
 pmachine.mgmtcenter = mgmt_center
 pmachine.save()
-osm = OpenStackManagement(None)
-osm.configure_host(IP)
+#osm = OpenStackManagement(None)
+#osm.configure_host(IP)
+MgmtCenterController.configure_host.apply_async(kwargs={'pmachine_guid': pmachine.guid, 'mgmtcenter_guid': mgmt_center.guid, 'update_link': True}).get(timeout=300)
+
 for sr in StorageRouterList.get_storagerouters():
     print('>', sr.name)
     for disk in sr.disks:
