@@ -126,6 +126,8 @@ function post_devstack_hook {
     # GET MITAKA DRIVER FROM UNSTABLE
     cd /opt/OpenvStorage
     sudo wget https://raw.githubusercontent.com/openvstorage/framework-cinder-plugin/master/cinder-volume-driver/mitaka/openvstorage.py 
+    # WORKAROUND: our code doesn't like unicode (six.text_type returns unicode)
+    sudo sed -i 's/six.text_type(/str(/g' /opt/OpenvStorage/openvstorage.py
     sudo cp /opt/OpenvStorage/openvstorage.py /opt/stack/new/cinder/cinder/volume/drivers/openvstorage.py
     sudo python ${WORKSPACE}/integrationtests/cinderci/dsvm-tempest-full/add_vpool.py 2>&1 | sudo tee -a /var/log/ovs_setup.log
    
