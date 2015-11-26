@@ -132,7 +132,15 @@ function post_devstack_hook {
     sudo sed -i "s/return {'driver_volume_type': 'file',/return {'driver_volume_type': 'local',/g" /opt/OpenvStorage/openvstorage.py
     sudo cp /opt/OpenvStorage/openvstorage.py /opt/stack/new/cinder/cinder/volume/drivers/openvstorage.py
     sudo python ${WORKSPACE}/integrationtests/cinderci/dsvm-tempest-full/add_vpool.py 2>&1 | sudo tee -a /var/log/ovs_setup.log
-   
+    # CONFIGURE QUOTA
+    export OS_USERNAME=admin
+    export OS_PASSWORD=rooter
+    export OS_TENANT_NAME=admin
+    export OS_AUTH_URL=http://$IP:35357/v2.0
+    ADMIN_ID=`keystone tenant-get admin 2>/dev/null | grep id | awk '{split($0,a,"|"); gsub(" ", "", a[3]); print a[3];}'`
+    cinder quota-update --volumes 100 --snapshots 500 --gigabytes 5000 $ADMIN_ID
+    cinder quota-update --volumes 100 --snapshots 500 --gigabytes 5000 --volume-type local $ADMIN_ID
+
     # CONFIGURE TEMPEST
     sudo sed -i 's/#build_timeout = 300/build_timeout = 600/g' /opt/stack/new/tempest/etc/tempest.conf
     sudo sed -i 's/build_timeout = 196/build_timeout = 600/g' /opt/stack/new/tempest/etc/tempest.conf
