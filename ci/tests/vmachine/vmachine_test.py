@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import time
+from nose.plugins.skip import SkipTest
 from ci import autotests
 from ci.tests.general.general import test_config
 from ci.tests.general.connection import Connection
@@ -20,6 +21,8 @@ from ci.tests.vpool import generic
 from ci.tests.mgmtcenter import generic as mgmtgeneric
 from ci.tests.general import general
 from ci.tests.general.logHandler import LogHandler
+from ovs.lib.vmachine import VMachineController
+from ovs.dal.lists.vdisklist import VDiskList
 
 logger = LogHandler.get('vmachines', name='vmachine')
 logger.logger.propagate = False
@@ -36,8 +39,10 @@ template_target_folder = '/var/tmp/templates/'
 
 NUMBER_OF_DISKS = 10
 GRID_IP = test_config.get('main', 'grid_ip')
-TIMEOUT = 30
+TIMEOUT = 70
 TIMER_STEP = 5
+TEMPLATE_DISK_NAME = "templateDisk"
+TEMPLATE_MACHINE_NAME = "templateMachine"
 
 
 def download_template(server_location):
@@ -77,6 +82,11 @@ def setup():
 
 def teardown():
     api = Connection.get_connection()
+    template_machine_list = api.get_component_by_name('vmachines', TEMPLATE_MACHINE_NAME)
+    if template_machine_list and len(template_machine_list):
+        VMachineController.delete(template_machine_list[0]['guid'])
+    vmachine_list = api.get_component_by_name('vmachines', TEMPLATE_MACHINE_NAME)
+    assert vmachine_list is None, 'Template {0} still in present in the model after deletion'.format(TEMPLATE_MACHINE_NAME)
     vpool_list = api.get_component_by_name('vpools', VPOOL_NAME)
     assert vpool_list, "No vpool found where one was expected"
     logger.info("Cleaning vpool")
@@ -89,8 +99,15 @@ def teardown():
 
 
 def create_raw_vdisk_from_template(template_folder, image_name, vpool_name, disk_name):
-    logger.info("Starting RAW disk creation")
+    logger.info("Starting RAW disk creation from template")
     out, err = general.execute_command('qemu-img convert -O raw {0}{1} /mnt/{2}/{3}.raw'.format(template_folder, image_name, vpool_name, disk_name))
+    if err:
+        logger.error("Error while creating raw disk: {0}".format(err))
+
+
+def create_raw_disk(vpool_name, disk_name):
+    logger.info("Starting RAW disk creation")
+    out, err = general.execute_command('truncate /mnt/{0}/{1}.raw --size 10000000'.format(vpool_name, disk_name))
     if err:
         logger.error("Error while creating raw disk: {0}".format(err))
 
@@ -104,14 +121,36 @@ def create_machine_from_existing_raw_disk(machine_name, vpool_name, disk_name):
         logger.error("Error while creating vmachine: {0}".format(err))
 
 
-def remove_machine_by_name(vmachine_name):
-    logger.info("Removing {0} vmachine".format(vmachine_name))
-    out, err = general.execute_command('virsh destroy {0}'.format(vmachine_name))
+def shut_down_vmachine_by_name(machine_name):
+    logger.info("Shutting down vmachine {0}".format(machine_name))
+    out, err = general.execute_command('virsh destroy {0}'.format(machine_name))
     if err:
-        logger.error("Error while stopping vmachine: {0}".format(err))
+        logger.error("Error while shutting down vmachine {0}: {1}".format(machine_name, err))
+
+
+def start_vmachine_by_name(machine_name):
+    logger.info("Starting vmachine {0}".format(machine_name))
+    out, err = general.execute_command('virsh start {0}'.format(machine_name))
+    if err:
+        logger.error("Error while shutting down vmachine {0}: {1}".format(machine_name, err))
+
+
+def undefine_machine(vmachine_name):
     out, err = general.execute_command('virsh undefine {0}'.format(vmachine_name))
     if err:
         logger.error("Error while removing vmachine: {0}".format(err))
+
+
+def remove_machine_by_name(vmachine_name):
+    api = Connection.get_connection()
+    vms = api.get_component_by_name('vmachines', vmachine_name)
+    if vms:
+        if vms[0]['hypervisor_status'] == 'RUNNING':
+            shut_down_vmachine_by_name(vmachine_name)
+    vms = api.get_component_by_name('vmachines', vmachine_name)
+    if vms:
+        if vms[0]['hypervisor_status'] == 'TURNEDOFF':
+            undefine_machine(vmachine_name)
 
 
 def vms_with_fio_test():
@@ -184,3 +223,86 @@ def vms_with_fio_test():
             counter = 0
     vpool = api.get_component_by_name('vpools', VPOOL_NAME)[0]
     assert len(vpool['vdisks_guids']) == 0, "Still some disks left on the vpool after waiting {0} seconds: {1}".format(TIMEOUT, vpool['vdisks_guids'])
+
+
+def set_vm_as_template_test():
+    """
+    {0}
+    """.format(general.get_function_name())
+
+    general.check_prereqs(testcase_number=2,
+                          tests_to_run=testsToRun)
+
+    api = Connection.get_connection()
+    vpool_list = api.get_component_by_name('vpools', VPOOL_NAME)
+    assert len(vpool_list), "No vpool found where one was expected"
+    vpool = vpool_list[0]
+
+    create_raw_disk(vpool['name'], TEMPLATE_DISK_NAME)
+    create_machine_from_existing_raw_disk(TEMPLATE_MACHINE_NAME, vpool['name'], TEMPLATE_DISK_NAME)
+
+    counter = TIMEOUT / TIMER_STEP
+    while counter > 0:
+        vmachine_list = api.get_component_by_name('vmachines', TEMPLATE_MACHINE_NAME)
+        if vmachine_list:
+            counter = 0
+        else:
+            counter -= 1
+            time.sleep(TIMER_STEP)
+
+    shut_down_vmachine_by_name(TEMPLATE_MACHINE_NAME)
+
+    counter = TIMEOUT / TIMER_STEP
+    while counter > 0:
+        vmachine_list = api.get_component_by_name('vmachines', TEMPLATE_MACHINE_NAME)
+        if vmachine_list[0]['hypervisor_status'] == 'TURNEDOFF':
+            counter = 0
+        else:
+            counter -= 1
+            time.sleep(TIMER_STEP)
+    vmachine_list = api.get_component_by_name('vmachines', TEMPLATE_MACHINE_NAME)
+    assert vmachine_list[0]['hypervisor_status'] == 'TURNEDOFF', \
+        "VMachine {0} expected to be in status TURNEDOFF, instead found in status {1} after {2} seconds".format(TEMPLATE_MACHINE_NAME,
+                                                                                                                vmachine_list[0]['hypervisor_status'],
+                                                                                                                TIMEOUT)
+    VMachineController.set_as_template(vmachine_list[0]['guid'])
+
+    vmachine_list = api.get_component_by_name('vmachines', TEMPLATE_MACHINE_NAME)
+    assert vmachine_list[0]['is_vtemplate'], 'Vmachine {0} is not a template'.format(TEMPLATE_MACHINE_NAME)
+
+    vdisk_list = VDiskList.get_vdisk_by_name(TEMPLATE_DISK_NAME)
+    if vdisk_list and len(vdisk_list):
+        vdisk_list[0].invalidate_dynamics(['is_vtemplate'])
+
+    vdisks = api.get_component_by_name('vdisks', TEMPLATE_DISK_NAME)
+    assert vdisks[0]['is_vtemplate'], "VDisk {0} expected to be changed to template after {1} seconds".format(TEMPLATE_DISK_NAME, TIMEOUT)
+
+
+def create_vm_from_template_test():
+    """
+    {0}
+    """.format(general.get_function_name())
+
+    general.check_prereqs(testcase_number=3,
+                          tests_to_run=testsToRun)
+
+    api = Connection.get_connection()
+    template_machine_list = api.get_component_by_name('vmachines', TEMPLATE_MACHINE_NAME)
+    if template_machine_list is None or len(template_machine_list) == 0:
+        raise SkipTest()
+
+    assert template_machine_list[0]['is_vtemplate'], 'Vmachine {0} is not a template'.format(TEMPLATE_MACHINE_NAME)
+
+    machine_from_template_name = 'fromTemplate'
+    pms = api.get_components('pmachines')
+    for pm in pms:
+        if pm['ip'] == GRID_IP:
+            VMachineController.create_from_template(machine_from_template_name, template_machine_list[0]['guid'], pm['guid'])
+
+    vmachine_list = api.get_component_by_name('vmachines', machine_from_template_name)
+    assert len(vmachine_list), 'Vmachine {0} not found'.format(machine_from_template_name)
+
+    VMachineController.delete(vmachine_list[0]['guid'])
+
+    vmachine_list = api.get_component_by_name('vmachines', machine_from_template_name)
+    assert vmachine_list is None, 'Vmachine {0} still in present in the model after deletion'.format(machine_from_template_name)
