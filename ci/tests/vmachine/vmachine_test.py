@@ -289,7 +289,7 @@ def create_vm_from_template_test():
     api = Connection.get_connection()
     template_machine_list = api.get_component_by_name('vmachines', TEMPLATE_MACHINE_NAME)
     if template_machine_list is None or len(template_machine_list) == 0:
-        raise SkipTest()
+        raise SkipTest('Template vmachine not found on environment')
 
     assert template_machine_list[0]['is_vtemplate'], 'Vmachine {0} is not a template'.format(TEMPLATE_MACHINE_NAME)
 
