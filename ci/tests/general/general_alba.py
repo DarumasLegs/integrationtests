@@ -334,12 +334,14 @@ class GeneralAlba(object):
         :param disk_type: Type of disk
         :return: Filtered disks
         """
-        grid_ip = General.get_config().get('main', 'grid_ip')
-        storagerouter = GeneralStorageRouter.get_storage_router_by_ip(ip=grid_ip)
-        root_client = SSHClient(storagerouter, username='root')
-        hdds, ssds = GeneralDisk.get_physical_disks(client=root_client)
-        count = 0
-        filtered_disks = list()
+        hdds = dict()
+        ssds = dict()
+        sorted_disks = dict()
+        filtered_disks = dict()
+
+        for node in AlbaNodeList.get_albanodes():
+            root_client = SSHClient(node.ip, username='root')
+            hdds[node.guid], ssds[node.guid] = GeneralDisk.get_physical_disks(client=root_client)
 
         if disk_type == 'SATA':
             list_to_check = hdds.values()
@@ -350,12 +352,27 @@ class GeneralAlba(object):
             list_to_check = hdds.values()
 
         for disk_name in disk_names:
-            for disk in list_to_check:
-                if disk_name == disk['name']:
-                    filtered_disks.append(disk['name'])
-                    count += 1
-            if count == amount:
-                break
+            for node in list_to_check:
+                for disk in node.values():
+                    if disk_name == disk['name']:
+                        if disk['ip'] in sorted_disks:
+                            sorted_disks[disk['ip']].append(disk['name'])
+                        else:
+                            sorted_disks[disk['ip']] = [disk['name']]
+
+        while amount > 0 and len(sorted_disks) > 0:
+            node = sorted_disks.keys()[amount % len(sorted_disks)]
+            if len(sorted_disks[node]) == 0:
+                sorted_disks.pop(node)
+                continue
+            if node in filtered_disks:
+                filtered_disks[node].append(sorted_disks[node].pop())
+                amount -= 1
+                continue
+            else:
+                filtered_disks[node] = [sorted_disks[node].pop()]
+                amount -= 1
+                continue
 
         return filtered_disks
 
@@ -381,11 +398,14 @@ class GeneralAlba(object):
         assert len(uninitialized_disk_names) >= nr_of_disks_to_init, "Not enough disks to initialize!"
 
         disks_to_init = GeneralAlba.filter_disks(uninitialized_disk_names, nr_of_disks_to_init, disk_type)
-        assert len(disks_to_init) >= nr_of_disks_to_init, "Not enough disks to initialize!"
+        amount_disks_to_init = 0
+        for ip in disks_to_init:
+            amount_disks_to_init += len(disks_to_init[ip])
+        assert amount_disks_to_init >= nr_of_disks_to_init, "Not enough disks to initialize!"
 
-        grid_ip = General.get_config().get('main', 'grid_ip')
-        alba_node = AlbaNodeList.get_albanode_by_ip(grid_ip)
-        failures = AlbaNodeController.initialize_disks(alba_node.guid, disks_to_init)
+        for ip in disks_to_init:
+            alba_node = AlbaNodeList.get_albanode_by_ip(ip)
+            failures = AlbaNodeController.initialize_disks(alba_node.guid, disks_to_init[ip])
         assert not failures, 'Alba disk initialization failed for (some) disks: {0}'.format(failures)
 
     @staticmethod
@@ -425,18 +445,21 @@ class GeneralAlba(object):
         claimable_disk_names = _wait_for_disk_count_with_status(alba_backend, nr_disks_to_claim, 'available')
 
         disks_to_claim = GeneralAlba.filter_disks(claimable_disk_names, nr_disks_to_claim, disk_type)
-        assert len(disks_to_claim) >= nr_disks_to_claim,\
+
+        amount_disks_to_claim = 0
+        for ip in disks_to_claim:
+            amount_disks_to_claim += len(disks_to_claim[ip])
+        assert amount_disks_to_claim >= nr_disks_to_claim,\
             "Unable to claim {0} disks, only found {1} disks.\n".format(nr_of_disks, len(disks_to_claim))
 
         alba_backend.invalidate_dynamics(['all_disks'])
         all_disks = alba_backend.all_disks
         osds = dict()
 
-        grid_ip = General.get_config().get('main', 'grid_ip')
-        alba_node = AlbaNodeList.get_albanode_by_ip(grid_ip)
-        for name in disks_to_claim:
+        for ip in disks_to_claim:
+            alba_node = AlbaNodeList.get_albanode_by_ip(ip)
             for disk in all_disks:
-                if name in disk['name'] and 'asd_id' in disk:
+                if disk['name'] in disks_to_claim[ip] and 'asd_id' in disk:
                     osds[disk['asd_id']] = alba_node.guid
 
         GeneralAlba.logger.info('osds: {0}'.format(osds))
