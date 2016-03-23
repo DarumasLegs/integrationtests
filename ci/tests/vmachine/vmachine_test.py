@@ -58,6 +58,7 @@ class TestVMachine(object):
                                                   'model=e1000 --import'.format(machine_name, vpool_name, disk_name))
             if err:
                 GeneralVMachine.logger.error("Error while creating vmachine: {0}".format(err))
+            time.sleep(5)
 
         counter = timeout / timer_step
         while counter > 0:
