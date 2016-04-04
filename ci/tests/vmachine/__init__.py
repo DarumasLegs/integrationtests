@@ -72,6 +72,11 @@ def teardown():
     vpool = GeneralVPool.get_vpool_by_name(vpool_name)
     assert vpool is not None, "No vpool found where one was expected"
     GeneralVMachine.logger.info("Cleaning vpool")
+    vms = GeneralVMachine.get_vmachines()
+    for vm in vms:
+        out, err, _ = General.execute_command('virsh destroy {0}'.format(vm.name))
+        out, err, _ = General.execute_command('virsh undefine {0}'.format(vm.name))
+    out, err, _ = General.execute_command("rm -rf /mnt/{0}/*.raw".format(vpool_name))
     GeneralVPool.remove_vpool(vpool)
 
     autotest_config = General.get_config()

@@ -45,6 +45,7 @@ class TestVMachine(object):
             out, err, _ = General.execute_command('qemu-img convert -O raw {0}{1} /mnt/{2}/{3}.raw'.format(template_folder, image_name, vpool_name, disk_name))
             if err:
                 GeneralVMachine.logger.error("Error while creating raw disk: {0}".format(err))
+                raise RuntimeError(err)
 
         vpool = GeneralVPool.get_vpool_by_name(vpool_name=vpool_name)
         assert len(vpool.vdisks) == nr_of_disks, "Only {0} out of {1} VDisks have been created".format(len(vpool.vdisks), nr_of_disks)
@@ -58,16 +59,21 @@ class TestVMachine(object):
                                                   'model=e1000 --import'.format(machine_name, vpool_name, disk_name))
             if err:
                 GeneralVMachine.logger.error("Error while creating vmachine: {0}".format(err))
-            time.sleep(5)
+                raise RuntimeError(err)
+            vms = GeneralVMachine.get_vmachine_by_name(machine_name)
+            counter = timeout / timer_step
+            while counter > 0:
+                if vms and len(vms):
+                    counter = 0
+                else:
+                    counter -= 1
+                    time.sleep(timer_step)
+                    vms = GeneralVMachine.get_vmachine_by_name(machine_name)
+            if vms and len(vms) == 0:
+                out, err, _ = General.execute_command('virsh destroy {0}'.format(machine_name))
+                out, err, _ = General.execute_command('virsh undefine {0}'.format(machine_name))
+                raise RuntimeError("Vmachine never appeared in model after being created:\n {0}".format(out))
 
-        counter = timeout / timer_step
-        while counter > 0:
-            vms = GeneralVMachine.get_vmachines()
-            if len(vms) == nr_of_disks:
-                counter = 0
-            else:
-                counter -= 1
-                time.sleep(timer_step)
         vms = GeneralVMachine.get_vmachines()
         assert len(vms) == nr_of_disks, "Only {0} out of {1} VMachines have been created after {2} seconds".format(len(vms), nr_of_disks, timeout)
 
@@ -83,9 +89,11 @@ class TestVMachine(object):
             out, err, _ = General.execute_command('virsh destroy {0}'.format(vmachine_name))
             if err:
                 GeneralVMachine.logger.error("Error while stopping vmachine: {0}".format(err))
+                raise RuntimeError(err)
             out, err, _ = General.execute_command('virsh undefine {0}'.format(vmachine_name))
             if err:
                 GeneralVMachine.logger.error("Error while removing vmachine: {0}".format(err))
+                raise RuntimeError(err)
 
         counter = timeout / timer_step
         while counter > 0:
@@ -102,6 +110,7 @@ class TestVMachine(object):
         out, err, _ = General.execute_command("rm -rf /mnt/{0}/*.raw".format(vpool_name))
         if err:
             GeneralVMachine.logger.error("Error while removing vdisks: {0}".format(err))
+            raise RuntimeError(err)
 
         counter = timeout / timer_step
         while counter > 0:
