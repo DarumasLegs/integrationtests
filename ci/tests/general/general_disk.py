@@ -99,28 +99,30 @@ class GeneralDisk(object):
         :param client: SSHClient object
         :return: Physical disk information
         """
-        disk_by_id = dict()
-        result = client.run('ls -la /dev/disk/by-id/')
+        disk_by_id = {}
+        result = client.run('ls -l /dev/disk/by-id/')
         for entry in result.splitlines():
             if 'ata-' in entry or 'scsi-' in entry or 'md-' in entry:
                 device = entry.split()
                 disk_by_id[device[10][-3:]] = device[8]
 
-        result = client.run('lsblk -n -o name,type,size,rota')
-        hdds = dict()
-        ssds = dict()
+        result = client.run('lsblk -l -n -o name,type,size,rota')
+        hdds = {}
+        ssds = {}
         for entry in result.splitlines():
             disk = entry.split()
             disk_id = disk[0]
             if len(disk_id) > 2 and disk_id[0:2] in ['fd', 'sr', 'lo']:
                 continue
             types = ['disk', 'raid6']
-            disk[0] = disk[0].decode("ascii", errors="ignore")
-            if disk[1] in types:
-                if disk[3] == '0':
-                    ssds[disk[0]] = {'size': disk[2], 'is_ssd': True, 'name': disk_by_id[disk[0]], 'ip': client.ip}
+            disk_type = disk[1]
+            if disk_type in types:
+                disk_rota = disk[3]
+                disk_size = disk[2]
+                if disk_rota == '0':
+                    ssds[disk_id] = {'size': disk_size, 'is_ssd': True, 'name': disk_by_id[disk[0]], 'ip': client.ip}
                 else:
-                    hdds[disk[0]] = {'size': disk[2], 'is_ssd': False, 'name': disk_by_id[disk[0]], 'ip': client.ip}
+                    hdds[disk_id] = {'size': disk_size, 'is_ssd': False, 'name': disk_by_id[disk[0]], 'ip': client.ip}
         return hdds, ssds
 
     @staticmethod

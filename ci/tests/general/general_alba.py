@@ -334,31 +334,34 @@ class GeneralAlba(object):
         :param disk_type: Type of disk
         :return: Filtered disks
         """
-        hdds = dict()
-        ssds = dict()
-        sorted_disks = dict()
-        filtered_disks = dict()
+        hdds = {}
+        ssds = {}
+        sorted_disks = {}
+        filtered_disks = {}
 
         for node in AlbaNodeList.get_albanodes():
             root_client = SSHClient(node.ip, username='root')
-            hdds[node.guid], ssds[node.guid] = GeneralDisk.get_physical_disks(client=root_client)
+            hdds[node], ssds[node] = GeneralDisk.get_physical_disks(client=root_client)
 
+        disk_type = disk_type.upper()
         if disk_type == 'SATA':
-            list_to_check = hdds.values()
+            list_to_check = hdds
         elif disk_type == 'SSD':
-            list_to_check = ssds.values()
-        else:
+            list_to_check = ssds
+        elif disk_type == 'ALL':
             hdds.update(ssds)
-            list_to_check = hdds.values()
+            list_to_check = hdds
+        else:
+            raise ValueError('Disk type should be SATA, SSD or ALL.')
 
-        for disk_name in disk_names:
-            for node in list_to_check:
-                for disk in node.values():
-                    if disk_name == disk['name']:
-                        if disk['ip'] in sorted_disks:
-                            sorted_disks[disk['ip']].append(disk['name'])
-                        else:
-                            sorted_disks[disk['ip']] = [disk['name']]
+        for disks in list_to_check.itervalues():
+            for disk_info in disks.itervalues():
+                cur_disk_ip = disk_info['ip']
+                cur_disk_name = disk_info['name']
+                if cur_disk_name in disk_names:
+                    if cur_disk_ip not in sorted_disks:
+                        sorted_disks[cur_disk_ip] = []
+                    sorted_disks[cur_disk_ip].append(cur_disk_name)
 
         while amount > 0 and len(sorted_disks) > 0:
             node = sorted_disks.keys()[amount % len(sorted_disks)]
@@ -367,12 +370,9 @@ class GeneralAlba(object):
                 continue
             if node in filtered_disks:
                 filtered_disks[node].append(sorted_disks[node].pop())
-                amount -= 1
-                continue
             else:
                 filtered_disks[node] = [sorted_disks[node].pop()]
-                amount -= 1
-                continue
+            amount -= 1
 
         return filtered_disks
 
