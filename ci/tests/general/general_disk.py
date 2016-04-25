@@ -31,8 +31,6 @@ class GeneralDisk(object):
     """
     A general class dedicated to Physical Disk logic
     """
-    api = Connection()
-
     @staticmethod
     def get_disk(guid):
         """
@@ -100,28 +98,33 @@ class GeneralDisk(object):
         """
         Retrieve physical disk information
         :param client: SSHClient object
+        :type client: SSHClient
+
         :return: Physical disk information
         """
-        disk_by_id = dict()
-        result = client.run('ls -la /dev/disk/by-id/')
-        for entry in result.splitlines():
-            if 'ata-' in entry:
-                device = entry.split()
-                disk_by_id[device[10][-3:]] = device[8]
+        disks_by_id = client.run('ls /dev/disk/by-id/').splitlines()
+        part_info = client.run('lsblk --raw --noheadings --bytes --output name,type,size,rota').splitlines()
+        dev_diskname_map = dict((client.file_read_link('/dev/disk/by-id/{0}'.format(entry)), entry) for entry in disks_by_id)
 
-        result = client.run('lsblk -n -o name,type,size,rota')
         hdds = dict()
         ssds = dict()
-        for entry in result.splitlines():
-            disk = entry.split()
-            disk_id = disk[0]
-            if len(disk_id) > 2 and disk_id[0:2] in ['fd', 'sr', 'lo']:
+        for entry in part_info:
+            disk_info = entry.split()
+            disk_id = '/dev/{0}'.format(disk_info[0])  # sda
+            disk_type = disk_info[1]  # disk, part, rom, ...
+            disk_size = disk_info[2]  # size in bytes
+            disk_rot = disk_info[3]   # 0 for SSD, 1 for HDD
+            if disk_type != 'disk':
                 continue
-            if disk[1] in 'disk':
-                if disk[3] == '0':
-                    ssds[disk[0]] = {'size': disk[2], 'is_ssd': True, 'name': disk_by_id[disk[0]]}
-                else:
-                    hdds[disk[0]] = {'size': disk[2], 'is_ssd': False, 'name': disk_by_id[disk[0]]}
+            if disk_id[:2] in ['fd', 'sr', 'lo']:
+                continue
+            if disk_id not in dev_diskname_map:
+                continue
+
+            if disk_rot == '0':
+                ssds[disk_id] = {'size': disk_size, 'is_ssd': True, 'name': dev_diskname_map[disk_id]}
+            else:
+                hdds[disk_id] = {'size': disk_size, 'is_ssd': False, 'name': dev_diskname_map[disk_id]}
         return hdds, ssds
 
     @staticmethod
@@ -136,16 +139,17 @@ class GeneralDisk(object):
         :param roles: Roles to assign to the partition
         :return: None
         """
-        GeneralDisk.api.execute_post_action(component='storagerouters',
-                                            guid=storagerouter.guid,
-                                            action='configure_disk',
-                                            data={'disk_guid': disk.guid,
-                                                  'offset': offset,
-                                                  'size': size,
-                                                  'roles': roles,
-                                                  'partition_guid': None if partition is None else partition.guid},
-                                            wait=True,
-                                            timeout=300)
+        api = Connection()
+        api.execute_post_action(component='storagerouters',
+                                guid=storagerouter.guid,
+                                action='configure_disk',
+                                data={'disk_guid': disk.guid,
+                                      'offset': offset,
+                                      'size': size,
+                                      'roles': roles,
+                                      'partition_guid': None if partition is None else partition.guid},
+                                wait=True,
+                                timeout=300)
 
     @staticmethod
     def append_disk_role(partition, roles_to_add):
@@ -220,7 +224,7 @@ class GeneralDisk(object):
         return disk.partitions[0]
 
     @staticmethod
-    def unpartition_disk(disk, partitions=None, wait=True):
+    def unpartition_disk(disk, partitions=None):
         """
         Return disk to RAW state
         :param disk: Disk DAL object
@@ -260,36 +264,52 @@ class GeneralDisk(object):
         :return: None
         """
         # @TODO: Remove this function and create much more generic functions which allow us much more configurability
-        disks = GeneralDisk.get_disks()
+        hdds = []
+        ssds = []
+        for disk in GeneralDisk.get_disks():
+            if disk.storagerouter != storagerouter or [part for part in disk.partitions if 'BACKEND' in part.roles] or disk.partitions:
+                continue
+            if disk.is_ssd is True:
+                ssds.append(disk)
+            else:
+                hdds.append(disk)
 
-        partition_roles = dict()
-        if len(disks) == 1:
-            disk = disks[0]
-            if len(disk.partitions) == 0:
-                partition_roles[GeneralDisk.partition_disk(disk)] = ['READ', 'WRITE', 'SCRUB']
-        elif len(disks) > 1:
-            disks_to_partition = [disk for disk in disks if disk.storagerouter == storagerouter and
-                                  not disk.partitions_guids and disk.is_ssd]
-            for disk in disks_to_partition:
-                GeneralDisk.partition_disk(disk)
+        add_read = not GeneralStorageRouter.has_roles(storagerouter=storagerouter, roles=['READ'])
+        add_scrub = not GeneralStorageRouter.has_roles(storagerouter=storagerouter, roles=['SCRUB'])
+        add_write = not GeneralStorageRouter.has_roles(storagerouter=storagerouter, roles=['WRITE'])
 
-            disks = GeneralDisk.get_disks()
-            hdds = [disk for disk in disks if disk.storagerouter == storagerouter and disk.is_ssd is False and disk.partitions_guids]
-            ssds = [disk for disk in disks if disk.storagerouter == storagerouter and disk.is_ssd is True and disk.partitions_guids]
+        if (add_read is True or add_scrub is True or add_write is True) and len(hdds) == 0 and len(ssds) == 0:
+            raise ValueError('Not enough disks available to add required roles')
 
-            if len(ssds) == 0:
-                if len(hdds) < 2:
-                    raise ValueError('Insufficient hard disks found on storagerouter {0}. Expected 2'.format(storagerouter.name))
-                partition_roles[hdds[0].partitions[0]] = ['READ']
-                partition_roles[hdds[1].partitions[0]] = ['WRITE', 'SCRUB']
+        disks_to_partition = {}
+        if add_scrub is True:
+            disk = hdds[0] if len(hdds) > 0 else ssds[0]
+            disks_to_partition[disk] = ['SCRUB']
+
+        if add_read is True:
+            if len(ssds) > 1:
+                disk = ssds.pop(0)  # Pop because we don't want to re-use for WRITE role
             elif len(ssds) == 1:
-                if len(hdds) < 1:
-                    raise ValueError('Insufficient hard disks found on storagerouter {0}. Expected 1'.format(storagerouter.name))
-                partition_roles[hdds[0].partitions[0]] = ['READ', 'SCRUB']
-                partition_roles[ssds[0].partitions[0]] = ['WRITE']
-            elif len(ssds) >= 2:
-                partition_roles[ssds[0].partitions[0]] = ['READ', 'SCRUB']
-                partition_roles[ssds[1].partitions[0]] = ['WRITE']
+                disk = ssds[0]
+            else:
+                disk = hdds[0]
 
-        for partition, roles in partition_roles.iteritems():
-            GeneralDisk.append_disk_role(partition, roles)
+            if disk in disks_to_partition:
+                disks_to_partition[disk].append('READ')
+            else:
+                disks_to_partition[disk] = ['READ']
+
+        if add_write is True:
+            if len(ssds) > 0:
+                disk = ssds[0]
+            else:
+                disk = hdds[0]
+
+            if disk in disks_to_partition:
+                disks_to_partition[disk].append('WRITE')
+            else:
+                disks_to_partition[disk] = ['WRITE']
+
+        for disk, roles in disks_to_partition.iteritems():
+            GeneralDisk.partition_disk(disk)
+            GeneralDisk.append_disk_role(disk.partitions[0], roles)

@@ -20,7 +20,6 @@ import re
 import time
 from ci.tests.general.general import General
 from ci.tests.general.general_alba import GeneralAlba
-from ci.tests.general.general_backend import GeneralBackend
 from ci.tests.general.general_disk import GeneralDisk
 from ci.tests.general.general_service import GeneralService
 from ci.tests.general.general_storagerouter import GeneralStorageRouter
@@ -53,7 +52,7 @@ class TestVPool(object):
             raise RuntimeError('vPool with name "{0}" still exists'.format(vpool_name))
 
         # Add vPool and validate health
-        vpool, vpool_params = GeneralVPool.add_vpool(vpool_parameters={'vpool_name': vpool_name})
+        vpool, vpool_params = GeneralVPool.add_vpool(vpool_parameters={'vpool_name': vpool_name, 'preset': GeneralAlba.ONE_DISK_PRESET})
         assert vpool is not None, 'vPool {0} was not created'.format(vpool_name)
         GeneralVPool.validate_vpool_sanity(expected_settings=vpool_params)
 
@@ -149,17 +148,17 @@ class TestVPool(object):
         # Create some namespaces in alba
         no_namespaces = 3
         backend_name = General.get_config().get('backend', 'name')
-        backend = GeneralBackend.get_by_name(name=backend_name)
+        alba_backend = GeneralAlba.get_by_name(name=backend_name)
         namespace_name = 'autotest-ns_'
         namespace_name_regex = re.compile('^autotest-ns_\d$')
         for nmspc_index in range(no_namespaces):
-            GeneralAlba.execute_alba_cli_action(backend.alba_backend, 'create-namespace', ['{0}{1}'.format(namespace_name, nmspc_index), 'default'], False)
-        result = GeneralAlba.list_alba_namespaces(alba_backend=backend.alba_backend,
+            GeneralAlba.execute_alba_cli_action(alba_backend, 'create-namespace', ['{0}{1}'.format(namespace_name, nmspc_index), 'default'], False)
+        result = GeneralAlba.list_alba_namespaces(alba_backend=alba_backend,
                                                   name=namespace_name_regex)
         assert len(result) == no_namespaces, "Expected {0} namespaces present on the {1} backend, found {2}".format(no_namespaces, backend_name, len(result))
 
         # Create a vPool and create volumes on it
-        vpool, _ = GeneralVPool.add_vpool()
+        vpool, _ = GeneralVPool.add_vpool(vpool_parameters={'preset': GeneralAlba.ONE_DISK_PRESET})
         root_client = SSHClient(GeneralStorageRouter.get_local_storagerouter(), username='root')
         if vpool.storagedrivers[0].storagerouter.pmachine.hvtype == 'VMWARE':
             GeneralVPool.mount_vpool(vpool=vpool,
@@ -170,7 +169,7 @@ class TestVPool(object):
             vdisks.append(GeneralVDisk.create_volume(size=10,
                                                      vpool=vpool,
                                                      root_client=root_client))
-        result = GeneralAlba.list_alba_namespaces(alba_backend=backend.alba_backend)
+        result = GeneralAlba.list_alba_namespaces(alba_backend=alba_backend)
         assert len(result) == 2 * no_namespaces + 1, "Expected {0} namespaces present on the {1} backend, found {2}".format(2 * no_namespaces + 1, backend_name, len(result))
 
         # Remove files and vPool
@@ -186,12 +185,12 @@ class TestVPool(object):
         GeneralVPool.remove_vpool(vpool)
 
         # Verify amount of namespaces
-        result = GeneralAlba.list_alba_namespaces(alba_backend=backend.alba_backend,
+        result = GeneralAlba.list_alba_namespaces(alba_backend=alba_backend,
                                                   name=namespace_name_regex)
         assert len(result) == no_namespaces, "Expected {0} namespaces present on the {1} backend, found {2}".format(no_namespaces, backend_name, len(result))
         for namespace in result:
-            GeneralAlba.execute_alba_cli_action(backend.alba_backend, 'delete-namespace', [namespace['name']], False)
-        result = GeneralAlba.list_alba_namespaces(alba_backend=backend.alba_backend,
+            GeneralAlba.execute_alba_cli_action(alba_backend, 'delete-namespace', [namespace['name']], False)
+        result = GeneralAlba.list_alba_namespaces(alba_backend=alba_backend,
                                                   name=namespace_name_regex)
         assert len(result) == 0, "Expected no namespaces present on the {1} backend, found {2}".format(no_namespaces, backend_name, len(result))
 

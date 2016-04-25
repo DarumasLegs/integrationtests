@@ -20,7 +20,7 @@
 # - ovsdb
 # - voldrv
 # - abm
-# - nsm_0 - controlled by voldrv
+# - nsm_0
 #
 # promote will extend cluster / demote will reduce cluster
 #

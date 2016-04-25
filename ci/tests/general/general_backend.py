@@ -25,8 +25,6 @@ class GeneralBackend(object):
     """
     A general class dedicated to Backend and BackendType logic
     """
-    api = Connection()
-
     @staticmethod
     def get_valid_backendtypes():
         """
@@ -75,7 +73,8 @@ class GeneralBackend(object):
         if backend is not None:
             return backend
 
+        api = Connection()
         backend_type = GeneralBackend.get_backendtype_by_code(code=backend_code)
-        GeneralBackend.api.add('backends', {'name': backend_name,
-                                            'backend_type_guid': backend_type.guid})
+        api.add('backends', {'name': backend_name,
+                             'backend_type_guid': backend_type.guid})
         return GeneralBackend.get_by_name(backend_name)

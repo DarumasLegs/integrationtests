@@ -32,8 +32,6 @@ class GeneralVDisk(object):
     """
     A general class dedicated to vDisk logic
     """
-    api = Connection()
-
     @staticmethod
     def get_vdisk_by_name(name):
         """
@@ -83,12 +81,9 @@ class GeneralVDisk(object):
                 root_client.run('mount -t ext4 /dev/{0} /mnt/{0}'.format(loop_device))
             else:
                 root_client.run('truncate -s {0}G {1}'.format(size, location))
-        except CalledProcessError as _:
-            cmd = """
-                umount /mnt/{0};
-                losetup -d /dev/{0};
-                rm {1}""".format(loop_device, location)
-            root_client.run(cmd)
+        except CalledProcessError:
+            if loop_device is not None:
+                root_client.run("""umount /mnt/{0}; losetup -d /dev/{0}; rm {1}""".format(loop_device, location))
             raise
 
         vdisk = None
@@ -190,15 +185,16 @@ class GeneralVDisk(object):
         """
         if timestamp is None:
             timestamp = str(int(time.time()))
-        return GeneralVDisk.api.execute_post_action(component='vdisks',
-                                                    guid=vdisk.guid,
-                                                    action='create_snapshot',
-                                                    data={'name': snapshot_name,
-                                                          'timestamp': timestamp,
-                                                          'consistent': consistent,
-                                                          'automatic': automatic,
-                                                          'sticky': sticky,
-                                                          'snapshot_id': snapshot_name})
+        api = Connection()
+        return api.execute_post_action(component='vdisks',
+                                       guid=vdisk.guid,
+                                       action='create_snapshot',
+                                       data={'name': snapshot_name,
+                                             'timestamp': timestamp,
+                                             'consistent': consistent,
+                                             'automatic': automatic,
+                                             'sticky': sticky,
+                                             'snapshot_id': snapshot_name})
 
     @staticmethod
     def delete_snapshot(disk, snapshot_name):
@@ -208,10 +204,11 @@ class GeneralVDisk(object):
         :param snapshot_name: Name of the snapshot
         :return: None
         """
-        return GeneralVDisk.api.execute_post_action(component='vdisks',
-                                                    guid=disk.guid,
-                                                    action='remove_snapshot',
-                                                    data={'snapshot_id': snapshot_name})
+        api = Connection()
+        return api.execute_post_action(component='vdisks',
+                                       guid=disk.guid,
+                                       action='remove_snapshot',
+                                       data={'snapshot_id': snapshot_name})
 
     @staticmethod
     def generate_hash_file(full_name, size, root_client=None):
@@ -253,7 +250,8 @@ class GeneralVDisk(object):
         :param vdisk: vdisk to retrieve config params from
         :return: {} containing config params
         """
-        status, params = GeneralVDisk.api.execute_get_action('vdisks', vdisk.guid, 'get_config_params', wait=True)
+        api = Connection()
+        status, params = api.execute_get_action('vdisks', vdisk.guid, 'get_config_params', wait=True)
         assert status is True,\
             'Retrieving config params failed: {0} for vdisk: {1} - {2}'.format(status, vdisk.name, params)
 
@@ -270,8 +268,9 @@ class GeneralVDisk(object):
         :param params: params to set
         :return:
         """
-        status, _ = GeneralVDisk.api.execute_post_action(component='vdisks', guid=vdisk.guid,
-                                                         action='set_config_params', data=params, wait=True)
+        api = Connection()
+        status, _ = api.execute_post_action(component='vdisks', guid=vdisk.guid,
+                                            action='set_config_params', data=params, wait=True)
         assert status is True,\
             'Retrieving config params failed: {0} for vdisk: {1} - {2}'.format(status, vdisk.name, params)
 
@@ -282,8 +281,9 @@ class GeneralVDisk(object):
         :param vdisk: vdisk to schedule backend sync to
         :return: TLogName associated with the data sent off to the backend
         """
-        status, tlog_name = GeneralVDisk.api.execute_post_action(component='vdisks', guid=vdisk.guid,
-                                                                 action='schedule_backend_sync', data={}, wait=True)
+        api = Connection()
+        status, tlog_name = api.execute_post_action(component='vdisks', guid=vdisk.guid,
+                                                    action='schedule_backend_sync', data={}, wait=True)
         assert status is True,\
             'Schedule backend sync failed for vdisk: {0}'.format(vdisk.name)
         return tlog_name
@@ -295,9 +295,10 @@ class GeneralVDisk(object):
         :param vdisk: vdisk to verify
         :param tlog_name: tlog_name to verify
         """
-        status, result = GeneralVDisk.api.execute_post_action(component='vdisks', guid=vdisk.guid,
-                                                              action='is_volume_synced_up_to_tlog',
-                                                              data={'tlog_name': tlog_name}, wait=True)
+        api = Connection()
+        status, result = api.execute_post_action(component='vdisks', guid=vdisk.guid,
+                                                 action='is_volume_synced_up_to_tlog',
+                                                 data={'tlog_name': tlog_name}, wait=True)
         assert status is True,\
             'is_volume_synced_up_to_tlog failed for vdisk: {0}'.format(vdisk.name)
 
@@ -310,9 +311,10 @@ class GeneralVDisk(object):
         :param vdisk: vdisk to verify
         :param snapshot_id: snapshot_id to verify
         """
-        status, result = GeneralVDisk.api.execute_post_action(component='vdisks', guid=vdisk.guid,
-                                                              action='is_volume_synced_up_to_snapshot',
-                                                              data={'snapshot_id': str(snapshot_id)}, wait=True)
+        api = Connection()
+        status, result = api.execute_post_action(component='vdisks', guid=vdisk.guid,
+                                                 action='is_volume_synced_up_to_snapshot',
+                                                 data={'snapshot_id': str(snapshot_id)}, wait=True)
         assert status is True,\
             'is_volume_synced_up_to_snapshot failed for vdisk: {0}'.format(vdisk.name)
 

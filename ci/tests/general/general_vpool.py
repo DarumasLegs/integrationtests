@@ -20,8 +20,10 @@ import copy
 import json
 from ci.tests.general.connection import Connection
 from ci.tests.general.general import General
+from ci.tests.general.general_alba import GeneralAlba
 from ci.tests.general.general_arakoon import GeneralArakoon
 from ci.tests.general.general_backend import GeneralBackend
+from ci.tests.general.general_disk import GeneralDisk
 from ci.tests.general.general_mgmtcenter import GeneralManagementCenter
 from ci.tests.general.general_service import GeneralService
 from ci.tests.general.general_storagedriver import GeneralStorageDriver
@@ -30,7 +32,6 @@ from ci.tests.general.general_vdisk import GeneralVDisk
 from ovs.dal.hybrids.diskpartition import DiskPartition
 from ovs.dal.hybrids.servicetype import ServiceType
 from ovs.dal.hybrids.vpool import VPool
-from ovs.dal.lists.backendlist import BackendList
 from ovs.dal.lists.vpoollist import VPoolList
 from ovs.extensions.db.etcd.configuration import EtcdConfiguration
 from ovs.extensions.generic.sshclient import SSHClient
@@ -43,8 +44,6 @@ class GeneralVPool(object):
     """
     A general class dedicated to vPool logic
     """
-    api = Connection()
-
     @staticmethod
     def add_vpool(vpool_parameters=None, storagerouters=None):
         """
@@ -65,16 +64,22 @@ class GeneralVPool(object):
         if not isinstance(storagerouters, list) or len(storagerouters) == 0:
             raise ValueError('Storage Routers should be a list and contain at least 1 element to add a vPool on')
 
+        api = Connection()
         vpool_name = None
         storagerouter_param_map = dict((sr, GeneralVPool.get_add_vpool_params(storagerouter=sr, **vpool_parameters)) for sr in storagerouters)
         for index, sr in enumerate(storagerouters):
             vpool_name = storagerouter_param_map[sr]['vpool_name']
-            task_result = GeneralVPool.api.execute_post_action(component='storagerouters',
-                                                               guid=sr.guid,
-                                                               action='add_vpool',
-                                                               data={'call_parameters': storagerouter_param_map[sr]},
-                                                               wait=True,
-                                                               timeout=500)
+            if GeneralStorageRouter.has_roles(storagerouter=sr, roles='DB') is False and sr.node_type == 'MASTER':
+                GeneralDisk.add_db_role(sr)
+            if GeneralStorageRouter.has_roles(storagerouter=sr, roles=['READ', 'SCRUB', 'WRITE']) is False:
+                GeneralDisk.add_read_write_scrub_roles(sr)
+
+            task_result = api.execute_post_action(component='storagerouters',
+                                                  guid=sr.guid,
+                                                  action='add_vpool',
+                                                  data={'call_parameters': storagerouter_param_map[sr]},
+                                                  wait=True,
+                                                  timeout=500)
             if task_result[0] is not True:
                 raise RuntimeError('vPool was not {0} successfully: {1}'.format('extended' if index > 0 else 'created', task_result[1]))
 
@@ -100,17 +105,18 @@ class GeneralVPool(object):
         :param storage_driver: Storage Driver to remove from the vPool
         :return: None
         """
+        api = Connection()
         vpool = storage_driver.vpool
         if storage_driver.storagerouter.pmachine.hvtype == 'VMWARE':
             root_client = SSHClient(storage_driver.storagerouter, username='root')
             if storage_driver.mountpoint in General.get_mountpoints(root_client):
                 root_client.run('umount {0}'.format(storage_driver.mountpoint))
-        task_result = GeneralVPool.api.execute_post_action(component='vpools',
-                                                           guid=vpool.guid,
-                                                           action='shrink_vpool',
-                                                           data={'storagerouter_guid': storage_driver.storagerouter.guid},
-                                                           wait=True,
-                                                           timeout=500)
+        task_result = api.execute_post_action(component='vpools',
+                                              guid=vpool.guid,
+                                              action='shrink_vpool',
+                                              data={'storagerouter_guid': storage_driver.storagerouter.guid},
+                                              wait=True,
+                                              timeout=500)
         if task_result[0] is not True:
             raise RuntimeError('Storage Driver with ID {0} was not successfully removed from vPool {1}'.format(storage_driver.storagedriver_id, vpool.name))
         return GeneralVPool.get_vpool_by_name(vpool_name=vpool.name)
@@ -122,11 +128,12 @@ class GeneralVPool(object):
         :param vpool: vPool to retrieve configuration for
         :return: Storage Driver configuration
         """
-        task_result = GeneralVPool.api.execute_get_action(component='vpools',
-                                                          guid=vpool.guid,
-                                                          action='get_configuration',
-                                                          wait=True,
-                                                          timeout=60)
+        api = Connection()
+        task_result = api.execute_get_action(component='vpools',
+                                             guid=vpool.guid,
+                                             action='get_configuration',
+                                             wait=True,
+                                             timeout=60)
         if task_result[0] is not True:
             raise RuntimeError('Failed to retrieve the configuration for vPool {0}'.format(vpool.name))
         return task_result[1]
@@ -167,17 +174,17 @@ class GeneralVPool(object):
                                           'dtl_transport': kwargs.get('dtl_transport', config_params.get('dtl_transport', 'tcp')),
                                           'cache_strategy': kwargs.get('cache_strategy', config_params.get('cache_strategy', 'on_read'))}}
         if vpool_type not in ['local', 'distributed']:
-            vpool_params['backend_connection_info'] = {'host': kwargs.get('alba_connection_host', test_config.get('vpool', 'alba_connection_host')),
-                                                       'port': kwargs.get('alba_connection_port', test_config.getint('vpool', 'alba_connection_port')),
-                                                       'username': kwargs.get('alba_connection_user', test_config.get('vpool', 'alba_connection_user')),
-                                                       'password': kwargs.get('alba_connection_pass', test_config.get('vpool', 'alba_connection_pass'))}
+            vpool_params['backend_connection_info'] = {'host': kwargs.get('alba_connection_host', ''),
+                                                       'port': kwargs.get('alba_connection_port', 443),
+                                                       'username': kwargs.get('alba_connection_user', ''),
+                                                       'password': kwargs.get('alba_connection_pass', '')}
             if vpool_type == 'alba':
-                backend = BackendList.get_by_name(kwargs.get('backend_name', test_config.get('backend', 'name')))
-                if backend is not None:
+                alba_backend = GeneralAlba.get_by_name(kwargs.get('backend_name', test_config.get('backend', 'name')))
+                if alba_backend is not None:
                     vpool_params['fragment_cache_on_read'] = kwargs.get('fragment_cache_on_read', test_config.getboolean('vpool', 'fragment_cache_on_read'))
                     vpool_params['fragment_cache_on_write'] = kwargs.get('fragment_cache_on_write', test_config.getboolean('vpool', 'fragment_cache_on_write'))
-                    vpool_params['backend_connection_info']['backend'] = {'backend': backend.alba_backend_guid,
-                                                                          'metadata': 'default'}
+                    vpool_params['backend_connection_info']['backend'] = {'backend': alba_backend.guid,
+                                                                          'metadata': kwargs.get('preset', 'default')}
         elif vpool_type == 'distributed':
             vpool_params['distributed_mountpoint'] = kwargs.get('distributed_mountpoint', '/tmp')
         return vpool_params

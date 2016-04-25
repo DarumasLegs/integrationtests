@@ -18,6 +18,7 @@ Class to configure OVS via Jenkins
 
 import re
 import sys
+import json
 import getopt
 import pexpect
 from pylabs.InitBaseCore import q
@@ -150,47 +151,6 @@ def _run_deploy_ovs(hv_ip, hv_password, sdk, cli, vifs):
     public_eth_adapter = [dev for dev in vm_object.config.hardware.device if dev.deviceInfo.summary == PUBLIC_NET_NAME][0]
 
     return storage_eth_adapter, public_eth_adapter
-
-
-def _create_autotest_cfg(os_name, vmware_info, template_server, screen_capture, vpool_name, backend_name,
-                         cinder_type, grid_ip, test_project, testrail_server, testrail_key, output_folder, ql):
-
-    return '''import ConfigParser
-Config = ConfigParser.ConfigParser()
-Config.read('/opt/OpenvStorage/ci/config/autotest.cfg')
-Config.set('main','hypervisorinfo','{vmware_info}')
-Config.set('main','os','{os_name}')
-Config.set('main','template_server','{template_server}')
-Config.set('main','username','admin')
-Config.set('main','password','admin')
-Config.set('main','grid_ip','{grid_ip}')
-Config.set('main','output_folder','{output_folder}')
-Config.set('main','qualitylevel','{qualitylevel}')
-Config.set('main','screen_capture','{screen_capture}')
-Config.set('vpool','name','{vpool_name}')
-Config.set('openstack','cinder_type','{cinder_type}')
-Config.set('backend','name','{backend_name}')
-Config.set('testrail','key','{testrail_key}')
-Config.set('testrail','server','{testrail_server}')
-Config.set('testrail','test_project','{test_project}')
-Config.set('mgmtcenter','username','admin')
-Config.set('mgmtcenter','password','rooter')
-Config.set('mgmtcenter','ip','{grid_ip}')
-with open('/opt/OpenvStorage/ci/config/autotest.cfg', 'w') as configfile:
-    Config.write(configfile)
-'''.format(os_name=os_name,
-           vmware_info=vmware_info,
-           template_server=template_server,
-           screen_capture=screen_capture,
-           vpool_name=vpool_name,
-           backend_name=backend_name,
-           cinder_type=cinder_type,
-           grid_ip=grid_ip,
-           test_project=test_project,
-           testrail_server=testrail_server,
-           testrail_key=testrail_key,
-           qualitylevel=ql,
-           output_folder=output_folder)
 
 
 def _deploy_ovsvsa_vmware(pub_ip, hv_ip, hv_password, domain_name_server, pub_network, gw, pub_netmask,
@@ -420,11 +380,10 @@ def install_autotests(node_ip, patch_branch=''):
         _patch_code_with(patch_branch, repo_map, remote_con)
 
 
-def run_autotests(node_ip, vmware_info='', dc='', capture_screen=False, test_plan='', reboot_test=False,
+def run_autotests(node_ip, vmware_info=None, dc='', capture_screen=False, test_plan='', reboot_test=False,
                   vpool_name='alba', backend_name='alba', test_project='Open vStorage Engineering',
                   testrail_server='', testrail_key='', output_folder='/var/tmp', ql=''):
     """
-    vmware_info = "10.100.131.221,root"
     :param node_ip: Node IP
     :param vmware_info: VMWare information
     :param dc: DC
@@ -440,42 +399,47 @@ def run_autotests(node_ip, vmware_info='', dc='', capture_screen=False, test_pla
     :param ql: Quality level
     :return: None
     """
-    remote_con = q.remote.system.connect(node_ip, "root", UBUNTU_PASSWORD)
+    _ = capture_screen  # Unused as of Fargo 2.7.0
+    if vmware_info is None:
+        vmware_info = {}
 
-    os_name = "ubuntu_desktop14_kvm" if not vmware_info else "small_linux_esx"
+    print 'Running all tests ...' if not test_plan else 'Running specific tests {0}'.format(test_plan)
 
-    template_server = "http://sso-qpackages-loch.cloudfounders.com"
-    if dc == 'bel-jen-axs.cloudfounders.com':
-        template_server = "http://sso-qpackages-brussels.cloudfounders.com"
+    create_autotest_cfg_cmd = '''ipython 2>&1 -c "import ConfigParser
+Config = ConfigParser.ConfigParser()
+Config.read('/opt/OpenvStorage/ci/config/autotest.cfg')
+Config.set('main', 'os', '{os_name}')
+Config.set('main', 'template_server', '{template_server}')
+Config.set('main', 'username', 'admin')
+Config.set('main', 'password', 'admin')
+Config.set('main', 'grid_ip', '{grid_ip}')
+Config.set('vpool', 'name', '{vpool_name}')
+Config.set('openstack', 'cinder_type', '{vpool_name}')
+Config.set('backend', 'name', '{backend_name}')
+Config.set('testrail', 'key', '{testrail_key}')
+Config.set('testrail', 'server', '{testrail_server}')
+Config.set('testrail', 'test_project', '{test_project}')
+Config.set('mgmtcenter', 'username', 'admin')
+Config.set('mgmtcenter', 'password', 'rooter')
+Config.set('mgmtcenter','ip', '{grid_ip}')
+Config.set('hypervisor', 'ip', '{hv_ip}')
+Config.set('hypervisor', 'username', '{hv_username}')
+Config.set('hypervisor', 'password', '{hv_password}')
+with open('/opt/OpenvStorage/ci/config/autotest.cfg', 'w') as configfile:
+    Config.write(configfile)"
+'''.format(os_name='ubuntu_desktop14_kvm' if not vmware_info else 'small_linux_esx',
+           template_server='http://sso-qpackages-loch.cloudfounders.com' if dc != 'bel-jen-axs.cloudfounders.com' else 'http://sso-qpackages-brussels.cloudfounders.com',
+           vpool_name=vpool_name,
+           backend_name=backend_name,
+           grid_ip=node_ip,
+           test_project=test_project,
+           testrail_server=testrail_server,
+           testrail_key=testrail_key,
+           hv_ip=vmware_info.get('ip', ''),
+           hv_username=vmware_info.get('username', ''),
+           hv_password=vmware_info.get('password', ''))
 
-    if not test_plan:
-        print 'Running all tests ...'
-    else:
-        print 'Running specific tests {0}'.format(test_plan)
-
-    test_run = "autotests.run(tests='{0}', output_format='TESTRAIL', output_folder='{1}', project_name='{2}'," \
-               "always_die={3}, qualitylevel='{4}', interactive={5})".format(test_plan, output_folder, test_project,
-                                                                             False, ql, False)
-
-    cmd = _create_autotest_cfg(os_name=os_name,
-                               vmware_info=vmware_info,
-                               template_server=template_server,
-                               screen_capture=str(capture_screen),
-                               vpool_name=vpool_name,
-                               backend_name=backend_name,
-                               cinder_type=vpool_name,
-                               grid_ip=node_ip,
-                               test_project=test_project,
-                               testrail_server=testrail_server,
-                               testrail_key=testrail_key,
-                               output_folder=output_folder,
-                               ql=ql)
-
-    cfgcmd = '''ipython 2>&1 -c "{0}"'''.format(cmd)
-
-    q.tools.installerci._run_command(cfgcmd, node_ip, "root", UBUNTU_PASSWORD, buffered=True)
-
-    cmd = '''source /etc/profile.d/ovs.sh
+    run_tests_cmd = '''source /etc/profile.d/ovs.sh
 pkill Xvfb
 pkill x11vnc
 sleep 3
@@ -483,26 +447,31 @@ Xvfb :1 -screen 0 1280x1024x16 &
 export DISPLAY=:1.0
 x11vnc -display :1 -bg -nopw -noipv6 -no6 -listen localhost -xkb  -autoport 5950 -forever
 ipython 2>&1 -c "from ci import autotests
-{test_run}"'''.format(test_run=test_run)
+autotests.run(tests='{0}', output_format='TESTRAIL', output_folder='{1}', project_name='{2}', always_die=False, qualitylevel='{3}', interactive=False)"
+'''.format(test_plan, output_folder, test_project, ql)
 
-    print cmd
-    out = q.tools.installerci._run_command(cmd, node_ip, "root", UBUNTU_PASSWORD, buffered=True)
+    post_reboot_cmd = '''source /etc/profile.d/ovs.sh
+export POST_REBOOT_HOST={0}
+python -c "from ci import autotests; autotests.run('ci.tests.system.validation_after_test.TestAfterCare.post_reboot_checks_test', 'TESTRAIL', '/var/tmp', existing_plan_id = {1})"'''
+
+    list_srs_cmd = """source /etc/profile.d/ovs.sh; \
+python -c 'import json; from ovs.dal.lists.storagerouterlist import StorageRouterList; \
+print json.dumps([sr.ip for sr in StorageRouterList.get_storagerouters()])'"""
+
+    q.tools.installerci._run_command(create_autotest_cfg_cmd, node_ip, "root", UBUNTU_PASSWORD, buffered=True)
+    out = q.tools.installerci._run_command(run_tests_cmd, node_ip, "root", UBUNTU_PASSWORD, buffered=True)
     out = out[0] + out[1]
     print out
 
     if reboot_test:
         print "Started reboot test"
 
-        m = re.search("http://testrail.openvstorage.com/index.php\?/plans/view/([0-9]*)", out)
-        assert m and m.groups(), "Couldn't find the testrail plan"
-        existing_plan_id = m.groups()[0]
+        remote_con = q.remote.system.connect(node_ip, "root", UBUNTU_PASSWORD)
+        match = re.search("http://testrail.openvstorage.com/index.php\?/plans/view/([0-9]*)", out)
+        assert match and match.groups(), "Couldn't find the testrail plan"
+        existing_plan_id = match.groups()[0]
 
-        cmd = """source /etc/profile.d/ovs.sh; \
-python -c 'from ovs.dal.lists.storagerouterlist import StorageRouterList; \
-print [sr.ip for sr in StorageRouterList.get_storagerouters() if sr.ip != "{0}"]'""".format(node_ip)
-        out = remote_con.process.execute(cmd)[1]
-        nodes = eval(out) + [node_ip]
-
+        nodes = json.loads(remote_con.process.execute(list_srs_cmd)[1])
         for rnode_ip in nodes:
             remote_con = q.remote.system.connect(rnode_ip, "root", UBUNTU_PASSWORD)
             remote_con.process.execute("shutdown -r now")
@@ -510,12 +479,9 @@ print [sr.ip for sr in StorageRouterList.get_storagerouters() if sr.ip != "{0}"]
             q.system.net.waitForIp(ip=rnode_ip, timeout=600)
             q.clients.ssh.waitForConnection(rnode_ip, "root", UBUNTU_PASSWORD, times=60)
 
-            cmd = """source /etc/profile.d/ovs.sh
-export POST_REBOOT_HOST={0}
-python -c 'from ci import autotests; autotests.run("api.extended_test:post_reboot_checks_test", "TESTRAIL", "/var/tmp", existing_plan_id = {1})'""".format(
-                rnode_ip, existing_plan_id)
-            print cmd
-            q.tools.installerci._run_command(cmd, node_ip, "root", UBUNTU_PASSWORD, buffered=True)
+        post_reboot_cmd = post_reboot_cmd.format(','.join(nodes), existing_plan_id)
+        print post_reboot_cmd
+        q.tools.installerci._run_command(post_reboot_cmd, node_ip, "root", UBUNTU_PASSWORD, buffered=True)
 
 
 def deploy_external_cluster(node_ip, server_port, client_port, ovsdb_arakoon_config, voldrv_arakoon_config, abm_arakoon_config, nsm_arakoon_config):

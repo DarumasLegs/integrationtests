@@ -16,17 +16,15 @@
 Validation testsuite
 """
 
+import os
 import re
+import time
 from ci.tests.general.general import General
-from ci.tests.general.general_pmachine import GeneralPMachine
+from ci.tests.general.general_service import GeneralService
 from ci.tests.general.general_storagerouter import GeneralStorageRouter
 from ci.tests.general.general_vdisk import GeneralVDisk
-from ci.tests.general.general_vpool import GeneralVPool
-from ovs.extensions.generic.sshclient import CalledProcessError
-from ovs.extensions.generic.sshclient import SSHClient
-from nose.tools import assert_equal
-from nose.tools import assert_raises
-from nose.tools import assert_true
+from nose.tools import assert_equal, assert_raises, assert_true
+from ovs.extensions.generic.sshclient import CalledProcessError, SSHClient
 
 
 class TestAfterCare(object):
@@ -41,45 +39,6 @@ class TestAfterCare(object):
         out = General.execute_command_on_node('127.0.0.1', 'grep "warning: syncfs" /var/log/upstart/*-asd-*.log | wc -l')
         assert out == '0', \
             "syncfs warnings detected in asd logs\n:{0}".format(out.splitlines())
-
-    @staticmethod
-    def ovs_2493_detect_could_not_acquire_lock_events_test():
-        """
-        Verify lock errors
-        """
-        errorlist = ""
-        command = "grep -C 1 'Could not acquire lock' /var/log/ovs/lib.log"
-        gridips = GeneralPMachine.get_all_ips()
-
-        for gridip in gridips:
-            out = General.execute_command_on_node(gridip, command + " | wc -l")
-            if not out == '0':
-                errorlist += "node %s \n:{0}\n\n".format(General.execute_command_on_node(gridip, command).splitlines()) % gridip
-
-        assert len(errorlist) == 0, "Lock errors detected in lib logs on \n" + errorlist
-
-    @staticmethod
-    def ovs_2468_verify_no_mds_files_left_after_remove_vpool_test():
-        """
-        Verify MDS presence after vpool removal
-        """
-        vpools = GeneralVPool.get_vpools()
-        vpool_names = [vpool.name for vpool in vpools]
-        command = "find /mnt -name '*mds*'"
-        mdsvpoolnames = []
-
-        out = General.execute_command(command + " | wc -l")
-        if not out == '0':
-            mdsvpoolnames = [line.split('/')[-1] for line in General.execute_command(command)[0].splitlines()]
-
-        mds_files_still_in_filesystem = ""
-
-        for mdsvpoolname in mdsvpoolnames:
-            if mdsvpoolname.split('_')[1] not in vpool_names:
-                mds_files_still_in_filesystem += mdsvpoolname + "\n"
-
-        assert len(mds_files_still_in_filesystem) == 0,\
-            "MDS files still present in filesystem after remove vpool test:\n %s" % mds_files_still_in_filesystem
 
     @staticmethod
     def test_basic_logrotate():
@@ -344,3 +303,45 @@ class TestAfterCare(object):
 
         for storagerouter in storagerouters:
             assert len(files_with_diff_licenses[storagerouter.guid]) == 0, 'Following files were found with different licenses:\n - {0}'.format('\n - '.join(files_with_diff_licenses[storagerouter.guid]))
+
+    @staticmethod
+    def post_reboot_checks_test():
+        """
+        Perform service checks after reboot. If no reboot was executed, just check the services on all StorageRouters
+        """
+        wait_time = 5 * 60
+        sleep_time = 5
+        rebooted_hosts = os.environ.get('POST_REBOOT_HOST')
+        if rebooted_hosts is None:
+            storagerouters = GeneralStorageRouter.get_storage_routers()
+        else:
+            storagerouters = [GeneralStorageRouter.get_storage_router_by_ip(ip=ip) for ip in rebooted_hosts.split(',')]
+
+        # @TODO 1: Make general call to list deployed services on a system
+        # @TODO 2: Make sure to include all ASD related services too
+        sr_service_map = {}
+        for storagerouter in storagerouters:
+            client = SSHClient(storagerouter, 'root')
+            sr_service_map[storagerouter] = []
+
+            while wait_time > 0:
+                non_running_services = []
+                service_names = client.run("initctl list | grep ovs-* | awk '{print $1}'").splitlines()
+                for service_name in service_names:
+                    if GeneralService.get_service_status(name=service_name, client=client) is False:
+                        non_running_services.append(service_name)
+
+                if len(non_running_services) == 0:
+                    sr_service_map[storagerouter] = []
+                    break
+                wait_time -= sleep_time
+                time.sleep(sleep_time)
+                sr_service_map[storagerouter] = non_running_services
+
+        errors = []
+        for sr, services in sr_service_map.iteritems():
+            for service in services:
+                errors.append('Host {0:<15}: Service {1} is not running'.format(sr.ip, service))
+        assert_equal(first=len(errors),
+                     second=0,
+                     msg='\n - {0}'.join(errors))

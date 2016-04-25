@@ -18,7 +18,6 @@ Init for vDisk testsuite
 
 from ci.tests.general.general import General
 from ci.tests.general.general_alba import GeneralAlba
-from ci.tests.general.general_backend import GeneralBackend
 from ci.tests.general.general_vpool import GeneralVPool
 
 
@@ -28,12 +27,10 @@ def setup():
     Make necessary changes before being able to run the tests
     :return: None
     """
-    autotest_config = General.get_config()
-    backend_name = autotest_config.get('backend', 'name')
-    assert backend_name, "Please fill out a valid backend name in autotest.cfg file"
-
+    General.validate_required_config_settings(settings={'vpool': ['name'],
+                                                        'backend': ['name']})
     GeneralAlba.prepare_alba_backend()
-    GeneralVPool.add_vpool()
+    GeneralVPool.add_vpool(vpool_parameters={'preset': GeneralAlba.ONE_DISK_PRESET})
 
 
 def teardown():
@@ -48,6 +45,7 @@ def teardown():
         GeneralVPool.remove_vpool(vpool)
 
     autotest_config = General.get_config()
-    be = GeneralBackend.get_by_name(autotest_config.get('backend', 'name'))
-    if be:
-        GeneralAlba.unclaim_disks_and_remove_alba_backend(alba_backend=be.alba_backend)
+    alba_backend = GeneralAlba.get_by_name(autotest_config.get('backend', 'name'))
+    if alba_backend is not None:
+        GeneralAlba.remove_disks(alba_backend)
+        GeneralAlba.remove_alba_backend(alba_backend)

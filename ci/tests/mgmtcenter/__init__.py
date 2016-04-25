@@ -15,7 +15,7 @@
 """
 Init for Management Center testsuite
 """
-
+from ci.tests.general.general import General
 from ci.tests.general.general_mgmtcenter import GeneralManagementCenter
 
 
@@ -25,6 +25,7 @@ def setup():
     Make necessary changes before being able to run the tests
     :return: None
     """
+    General.validate_required_config_settings()
     GeneralManagementCenter.create_generic_mgmt_center()
 
 

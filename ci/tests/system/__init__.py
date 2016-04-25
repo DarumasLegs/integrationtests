@@ -15,8 +15,8 @@
 """
 Init for System testsuite
 """
-
 from ci.tests.general.general import General
+from ci.tests.general.general_storagerouter import GeneralStorageRouter
 
 
 def setup():
@@ -26,6 +26,10 @@ def setup():
     :return: None
     """
     print "setup called " + __name__
+    settings = None
+    if GeneralStorageRouter.get_local_storagerouter().pmachine.hvtype == 'VMWARE':
+        settings = {'hypervisor': ['ip', 'username', 'password']}
+    General.validate_required_config_settings(settings=settings)
     General.cleanup()
 
 

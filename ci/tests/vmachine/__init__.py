@@ -18,7 +18,6 @@ Init for vMachine testsuite
 
 from ci.tests.general.general import General
 from ci.tests.general.general_alba import GeneralAlba
-from ci.tests.general.general_backend import GeneralBackend
 from ci.tests.general.general_mgmtcenter import GeneralManagementCenter
 from ci.tests.general.general_vmachine import GeneralVMachine
 from ci.tests.general.general_vpool import GeneralVPool
@@ -30,9 +29,8 @@ def setup():
     Make necessary changes before being able to run the tests
     :return: None
     """
-    autotest_config = General.get_config()
-    backend_name = autotest_config.get('backend', 'name')
-    assert backend_name, "Please fill out a valid backend name in autotest.cfg file"
+    General.validate_required_config_settings(settings={'vpool': ['name'],
+                                                        'backend': ['name']})
 
     # Download the template
     cmd = '[ -d {0} ] && echo "Dir exists" || echo "Dir does not exists"'.format(GeneralVMachine.template_target_folder)
@@ -59,7 +57,7 @@ def setup():
 
     GeneralAlba.prepare_alba_backend()
     GeneralManagementCenter.create_generic_mgmt_center()
-    GeneralVPool.add_vpool()
+    GeneralVPool.add_vpool(vpool_parameters={'preset': GeneralAlba.ONE_DISK_PRESET})
 
 
 def teardown():
@@ -68,16 +66,17 @@ def teardown():
     Removal actions of possible things left over after the test-run
     :return: None
     """
-    vpool_name = General.get_config().get('vpool', 'name')
+    autotest_config = General.get_config()
+    vpool_name = autotest_config.get('vpool', 'name')
     vpool = GeneralVPool.get_vpool_by_name(vpool_name)
     assert vpool is not None, "No vpool found where one was expected"
     GeneralVMachine.logger.info("Cleaning vpool")
     GeneralVPool.remove_vpool(vpool)
 
-    autotest_config = General.get_config()
-    be = GeneralBackend.get_by_name(autotest_config.get('backend', 'name'))
-    if be:
-        GeneralAlba.unclaim_disks_and_remove_alba_backend(alba_backend=be.alba_backend)
+    alba_backend = GeneralAlba.get_by_name(autotest_config.get('backend', 'name'))
+    if alba_backend is not None:
+        GeneralAlba.remove_disks(alba_backend)
+        GeneralAlba.remove_alba_backend(alba_backend)
 
     GeneralVMachine.logger.info("Cleaning management center")
 

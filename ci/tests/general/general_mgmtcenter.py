@@ -31,8 +31,6 @@ class GeneralManagementCenter(object):
     """
     A general class dedicated to Management Center logic
     """
-    api = Connection()
-
     @staticmethod
     def get_mgmt_centers():
         """
@@ -75,12 +73,13 @@ class GeneralManagementCenter(object):
         :param port: Port to connect on
         :return: Management Center information
         """
-        return GeneralManagementCenter.api.add('mgmtcenters', {'name': name,
-                                                               'username': username,
-                                                               'password': password,
-                                                               'ip': ip,
-                                                               'type': center_type,
-                                                               'port': port})
+        api = Connection()
+        return api.add('mgmtcenters', {'name': name,
+                                       'username': username,
+                                       'password': password,
+                                       'ip': ip,
+                                       'type': center_type,
+                                       'port': port})
 
     @staticmethod
     def create_generic_mgmt_center():
@@ -111,7 +110,8 @@ class GeneralManagementCenter(object):
         for pmachine in mgmtcenter.pmachines:
             GeneralManagementCenter.unconfigure_pmachine_with_mgmtcenter(pmachine=pmachine,
                                                                          mgmtcenter=mgmtcenter)
-        GeneralManagementCenter.api.remove('mgmtcenters', mgmtcenter.guid)
+        api = Connection()
+        api.remove('mgmtcenters', mgmtcenter.guid)
 
     @staticmethod
     def configure_pmachine_with_mgmtcenter(pmachine, mgmtcenter):

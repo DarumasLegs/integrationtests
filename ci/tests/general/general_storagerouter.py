@@ -27,8 +27,6 @@ class GeneralStorageRouter(object):
     """
     A general class dedicated to Storage Router logic
     """
-    api = Connection()
-
     @staticmethod
     def get_storage_routers():
         """
@@ -77,16 +75,17 @@ class GeneralStorageRouter(object):
         :param storagerouter: Storage Router to synchronize
         :return: None
         """
+        api = Connection()
         storagerouters = [storagerouter]
         if storagerouter is None:
             storagerouters = GeneralStorageRouter.get_storage_routers()
         for storagerouter in storagerouters:
-            GeneralStorageRouter.api.execute_post_action(component='storagerouters',
-                                                         guid=storagerouter.guid,
-                                                         action='rescan_disks',
-                                                         data={},
-                                                         wait=True,
-                                                         timeout=300)
+            api.execute_post_action(component='storagerouters',
+                                    guid=storagerouter.guid,
+                                    action='rescan_disks',
+                                    data={},
+                                    wait=True,
+                                    timeout=300)
 
     @staticmethod
     def get_metadata(storagerouter):
@@ -138,12 +137,13 @@ class GeneralStorageRouter(object):
         :param storagerouter: Storage Router to retrieve metadata for
         :return: Metadata
         """
-        result, metadata = GeneralStorageRouter.api.execute_post_action(component='storagerouters',
-                                                                        guid=storagerouter.guid,
-                                                                        action='get_metadata',
-                                                                        data={},
-                                                                        wait=True,
-                                                                        timeout=300)
+        api = Connection()
+        result, metadata = api.execute_post_action(component='storagerouters',
+                                                   guid=storagerouter.guid,
+                                                   action='get_metadata',
+                                                   data={},
+                                                   wait=True,
+                                                   timeout=300)
         assert result is True, 'Retrieving metadata failed for Storage Router {0}'.format(storagerouter.name)
 
         required_params = {'ipaddresses': (list, Toolbox.regex_ip),

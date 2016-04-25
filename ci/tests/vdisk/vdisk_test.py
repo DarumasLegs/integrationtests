@@ -32,7 +32,6 @@ class TestVDisk(object):
     logger.logger.propagate = False
 
     vpool_name = General.get_config().get("vpool", "name")
-    assert vpool_name, 'vPool name required in autotest.cfg file'
 
     @staticmethod
     def ovs_3700_validate_test():
