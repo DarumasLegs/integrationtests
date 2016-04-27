@@ -39,12 +39,6 @@ def setup():
     Make necessary changes before being able to run the tests
     :return: None
     """
-    General.validate_required_config_settings(settings={'backend': ['name']})
-    backend_name = General.get_config().get('backend', 'name')
-    alba_backend = GeneralAlba.get_by_name(backend_name)
-    if alba_backend is not None:
-        GeneralAlba.remove_alba_backend(alba_backend)
-
     for storagerouter in GeneralStorageRouter.get_masters():
         root_client = SSHClient(storagerouter, username='root')
         if GeneralService.get_service_status(name='ovs-scheduled-tasks',
@@ -52,17 +46,10 @@ def setup():
             GeneralService.stop_service(name='ovs-scheduled-tasks',
                                         client=root_client)
 
-    storagerouters = GeneralStorageRouter.get_storage_routers()
-    for sr in storagerouters:
+    for sr in GeneralStorageRouter.get_storage_routers():
         root_client = SSHClient(sr, username='root')
-        if GeneralStorageRouter.has_roles(storagerouter=sr, roles=['DB']) is False:
-            GeneralDisk.add_db_role(sr)
-
         for location in TEST_CLEANUP:
             root_client.run('rm -rf {0}'.format(location))
-
-    GeneralAlba.add_alba_backend(backend_name)
-    GeneralArakoon.voldrv_arakoon_checkup()
 
 
 def teardown():
@@ -71,10 +58,6 @@ def teardown():
     Removal actions of possible things left over after the test-run
     :return: None
     """
-    alba_backend = GeneralAlba.get_by_name(General.get_config().get('backend', 'name'))
-    if alba_backend is not None:
-        GeneralAlba.remove_alba_backend(alba_backend)
-
     for storagerouter in GeneralStorageRouter.get_masters():
         root_client = SSHClient(storagerouter, username='root')
         if GeneralService.get_service_status(name='ovs-scheduled-tasks',

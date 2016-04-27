@@ -118,9 +118,11 @@ class GeneralAlba(object):
 
         init_disks = GeneralAlba.initialise_disks(alba_backend=alba_backend, nr_of_disks=1)
         GeneralAlba.claim_disks(alba_backend=alba_backend, disk_names=init_disks)
-        GeneralAlba.add_preset(alba_backend=alba_backend,
-                               name=GeneralAlba.ONE_DISK_PRESET,
-                               policies=[[1, 1, 1, 2]])
+        if GeneralAlba.has_preset(alba_backend=alba_backend,
+                                  preset_name=GeneralAlba.ONE_DISK_PRESET) is False:
+            GeneralAlba.add_preset(alba_backend=alba_backend,
+                                   name=GeneralAlba.ONE_DISK_PRESET,
+                                   policies=[[1, 1, 1, 2]])
 
     @staticmethod
     def execute_alba_cli_action(alba_backend, action, params=None, json_output=True):
@@ -208,6 +210,24 @@ class GeneralAlba(object):
         result = api.execute_post_action('alba/backends', alba_backend.guid, 'delete_preset', data, wait=True)
         if result[0] is not True:
             raise ValueError('Failed to remove preset {0}. Reason: {1}'.format(name, result[1]))
+
+    @staticmethod
+    def has_preset(alba_backend, preset_name):
+        """
+        Validate whether the ALBA backend has a preset with given name
+        :param alba_backend: ALBA backend
+        :type alba_backend: AlbaBackend
+
+        :param preset_name: Name of the preset
+        :type preset_name: str
+
+        :return: True if preset is present
+        :rtype: bool
+        """
+        for preset in alba_backend.presets:
+            if preset['name'] == preset_name:
+                return True
+        return False
 
     @staticmethod
     def wait_for_alba_backend_status(alba_backend, status='RUNNING', timeout=None):

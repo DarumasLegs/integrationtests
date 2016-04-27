@@ -110,21 +110,22 @@ class GeneralDisk(object):
         ssds = dict()
         for entry in part_info:
             disk_info = entry.split()
-            disk_id = '/dev/{0}'.format(disk_info[0])  # sda
+            disk_id = disk_info[0]  # sda
             disk_type = disk_info[1]  # disk, part, rom, ...
             disk_size = disk_info[2]  # size in bytes
             disk_rot = disk_info[3]   # 0 for SSD, 1 for HDD
+            disk_dev = '/dev/{0}'.format(disk_id)
             if disk_type != 'disk':
                 continue
             if disk_id[:2] in ['fd', 'sr', 'lo']:
                 continue
-            if disk_id not in dev_diskname_map:
+            if disk_dev not in dev_diskname_map:
                 continue
 
             if disk_rot == '0':
-                ssds[disk_id] = {'size': disk_size, 'is_ssd': True, 'name': dev_diskname_map[disk_id]}
+                ssds[disk_id] = {'size': disk_size, 'is_ssd': True, 'name': dev_diskname_map[disk_dev]}
             else:
-                hdds[disk_id] = {'size': disk_size, 'is_ssd': False, 'name': dev_diskname_map[disk_id]}
+                hdds[disk_id] = {'size': disk_size, 'is_ssd': False, 'name': dev_diskname_map[disk_dev]}
         return hdds, ssds
 
     @staticmethod

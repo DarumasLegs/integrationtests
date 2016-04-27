@@ -20,6 +20,7 @@ from ci.tests.general.general import General
 from ci.tests.general.general_disk import GeneralDisk
 from ci.tests.general.general_storagerouter import GeneralStorageRouter
 from ci.tests.general.general_vdisk import GeneralVDisk
+from nose.tools import assert_equal
 from nose.plugins.skip import SkipTest
 from ovs.extensions.generic.sshclient import SSHClient
 
@@ -67,44 +68,44 @@ class TestFlexibleDiskLayout(object):
         loops = dict()
 
         TestFlexibleDiskLayout.logger.setLevel('INFO')
-        storagerouters = GeneralStorageRouter.get_storage_routers()
-        for storagerouter in storagerouters:
+        for storagerouter in GeneralStorageRouter.get_storage_routers():
             root_client = SSHClient(storagerouter, username='root')
             hdds, ssds = GeneralDisk.get_physical_disks(client=root_client)
-            physical_disks[storagerouter.guid] = hdds
-            physical_disks[storagerouter.guid].update(ssds)
-            loop_devices = General.get_loop_devices(client=root_client)
-            loops[storagerouter.guid] = loop_devices
 
-        disks = GeneralDisk.get_disks()
-        for disk in disks:
-            if disk.storagerouter_guid not in modelled_disks:
-                modelled_disks[disk.storagerouter_guid] = dict()
-            if disk.name not in loops[disk.storagerouter_guid]:
-                modelled_disks[disk.storagerouter_guid][disk.name] = {'is_ssd': disk.is_ssd}
+            loops[storagerouter] = General.get_loop_devices(client=root_client)
+            physical_disks[storagerouter] = hdds
+            physical_disks[storagerouter].update(ssds)
+
+        for disk in GeneralDisk.get_disks():
+            if disk.storagerouter not in modelled_disks:
+                modelled_disks[disk.storagerouter] = dict()
+            if disk.name not in loops[disk.storagerouter]:
+                modelled_disks[disk.storagerouter][disk.name] = {'is_ssd': disk.is_ssd}
 
         TestFlexibleDiskLayout.logger.info('PDISKS: {0}'.format(physical_disks))
         TestFlexibleDiskLayout.logger.info('MDISKS: {0}'.format(modelled_disks))
 
-        assert len(modelled_disks.keys()) == len(physical_disks.keys()),\
-            "Nr of modelled/physical disks is NOT equal!:\n PDISKS: {0}\nMDISKS: {1}".format(modelled_disks,
-                                                                                             physical_disks)
+        assert_equal(first=set(modelled_disks),
+                     second=set(physical_disks),
+                     msg='Difference in storagerouters found')
 
-        for guid in physical_disks.keys():
-            assert len(physical_disks[guid]) == len(modelled_disks[guid]),\
-                "Nr of modelled/physical disks differs for storagerouter {0}:\n{1}\n{2}".format(guid,
-                                                                                                physical_disks[guid],
-                                                                                                modelled_disks[guid])
+        for storagerouter, physical_disk_info in physical_disks.iteritems():
+            modelled_disk_info = modelled_disks[storagerouter]
+            assert_equal(first=set(physical_disk_info),
+                         second=set(modelled_disk_info),
+                         msg='Nr of modelled/physical disks differs for storagerouter {0}:\nPhysical: {1}\nModel: {2}'.format(storagerouter.name,
+                                                                                                                              physical_disk_info.keys(),
+                                                                                                                              modelled_disk_info.keys()))
 
-        # basic check on hdd/ssd
-        for guid in physical_disks.keys():
-            mdisks = modelled_disks[guid]
-            pdisks = physical_disks[guid]
-            for key in mdisks.iterkeys():
-                assert mdisks[key]['is_ssd'] == pdisks[key]['is_ssd'],\
-                    "Disk incorrectly modelled for storagerouter {0}\n,mdisk:{1}\n,pdisk:{2}".format(guid,
-                                                                                                     mdisks[key],
-                                                                                                     pdisks[key])
+            for disk_name, single_physical_disk_info in physical_disk_info.iteritems():
+                single_model_disk_info = modelled_disk_info[disk_name]
+                assert 'is_ssd' in single_model_disk_info, 'Key "is_ssd" is not present in model info for disk {0}'.format(disk_name)
+                assert 'is_ssd' in single_physical_disk_info, 'Key "is_ssd" is not present in physical info for disk {0}'.format(disk_name)
+                assert_equal(first=single_physical_disk_info['is_ssd'],
+                             second=single_model_disk_info['is_ssd'],
+                             msg='SSD flag for Disk {0} on Storage Router {1} differs in model, value should be {2}'.format(disk_name,
+                                                                                                                            storagerouter.name,
+                                                                                                                            single_physical_disk_info['is_ssd']))
 
     @staticmethod
     def fdl_0002_add_remove_partition_with_role_and_crosscheck_model_test():
@@ -125,19 +126,7 @@ class TestFlexibleDiskLayout(object):
         if not unused_disks:
             raise SkipTest("At least one unused disk should be available for partition testing")
 
-        hdds = dict()
-        ssds = dict()
-        mdisks = GeneralDisk.get_disks()
-        for disk in mdisks:
-            if disk.storagerouter_guid == my_sr.guid:
-                if disk.is_ssd:
-                    ssds['/dev/' + disk.name] = disk
-                else:
-                    hdds['/dev/' + disk.name] = disk
-
-        all_disks = dict(ssds)
-        all_disks.update(hdds)
-        print all_disks
+        all_disks = dict(('/dev/{0}'.format(disk.name), disk) for disk in GeneralDisk.get_disks() if disk.storagerouter == my_sr)
         print all_disks.keys()
 
         # check no partitions are modelled for unused disks

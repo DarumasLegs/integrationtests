@@ -31,9 +31,7 @@ Arakoon testsuite
 
 import os
 import hashlib
-from ci.tests.general.general import General
 from ci.tests.general.general_arakoon import GeneralArakoon
-from ci.tests.general.general_pmachine import GeneralPMachine
 from ci.tests.general.general_storagerouter import GeneralStorageRouter
 from ci.tests.general.logHandler import LogHandler
 from ConfigParser import RawConfigParser
@@ -82,18 +80,6 @@ class TestArakoon(object):
         return True
 
     @staticmethod
-    def get_cluster_pmachines(ips):
-        """
-        Retrieve Physical Machine information
-        :param ips: IPs to retrieve information for
-        :return: Dictionary with IP and Physical Machine information
-        """
-        pmachines_to_check = dict()
-        for ip in ips:
-            pmachines_to_check[ip] = GeneralPMachine.get_pmachine_by_ip(ip)
-        return pmachines_to_check
-
-    @staticmethod
     def verify_arakoon_structure(client, cluster_name, etcd_present, dir_present):
         """
         Verify the expected arakoon structure and etcd configuration
@@ -113,75 +99,66 @@ class TestArakoon(object):
             assert client.dir_exists(directory) is dir_present, "Arakoon directory {0} was {1}expected".format(directory, '' if dir_present else 'not ')
 
     @staticmethod
-    def validate_arakoon_config_files(pmachines, config=None):
+    def validate_arakoon_config_files(storagerouters, cluster_name=None):
         """
         Verify whether all arakoon configurations are correct
-        :param pmachines: Physical Machine information
-        :param config: Arakoon config
+        :param storagerouters: Storage Routers
+        :param cluster_name: Name of the Arakoon cluster
         :return:
         """
-        ips = pmachines.keys()
-        ips.sort()
-        TestArakoon.logger.info('Validating arakoon files for {0}'.format(ips))
-        if not ips:
-            return False
+        storagerouters.sort(key=lambda k: k.ip)
+        TestArakoon.logger.info('Validating arakoon files for {0}'.format(', '.join([sr.ip for sr in storagerouters])))
 
         nr_of_configs_on_master = 0
         nr_of_configs_on_extra = 0
 
         node_ids = dict()
-        extra_ips = list()
         matrix = dict()
-        for ip in ips:
-            node_type = pmachines[ip].storagerouters[0].node_type
-            if node_type == 'MASTER':
-                out = General.execute_command_on_node(ip, 'cat /etc/openvstorage_id')
-                node_ids[ip] = out
-            else:
-                extra_ips.append(ip)
+        for sr in storagerouters:
+            node_ids[sr.ip] = sr.machine_id
             configs_to_check = []
-            matrix[ip] = dict()
-            if config:
-                if EtcdConfiguration.exists(GeneralArakoon.ETCD_CONFIG_KEY.format(config), raw = True):
-                    configs_to_check = [GeneralArakoon.ETCD_CONFIG_KEY.format(config)]
+            matrix[sr] = dict()
+            if cluster_name is not None:
+                if EtcdConfiguration.exists(GeneralArakoon.ETCD_CONFIG_KEY.format(cluster_name), raw = True):
+                    configs_to_check = [GeneralArakoon.ETCD_CONFIG_KEY.format(cluster_name)]
             else:
                 gen = EtcdConfiguration.list(GeneralArakoon.ETCD_CONFIG_ROOT)
                 for entry in gen:
                     if 'nsm_' not in entry:
-                        if EtcdConfiguration.exists(GeneralArakoon.ETCD_CONFIG_KEY.format(config), raw = True):
+                        if EtcdConfiguration.exists(GeneralArakoon.ETCD_CONFIG_KEY.format(cluster_name), raw = True):
                             configs_to_check.append(GeneralArakoon.ETCD_CONFIG_KEY.format(entry))
             for config_name in configs_to_check:
                 config_contents = EtcdConfiguration.get(configs_to_check[0], raw = True)
-                matrix[ip][config_name] = hashlib.md5(config_contents).hexdigest()
-            if node_type == 'MASTER':
-                nr_of_configs_on_master = len(matrix[ip])
+                matrix[sr][config_name] = hashlib.md5(config_contents).hexdigest()
+            if sr.node_type == 'MASTER':
+                nr_of_configs_on_master = len(matrix[sr])
             else:
-                nr_of_configs_on_extra = len(matrix[ip])
+                nr_of_configs_on_extra = len(matrix[sr])
 
         TestArakoon.logger.info('cluster_ids: {0}'.format(node_ids))
         TestArakoon.logger.info('matrix: {0}'.format(matrix))
 
-        for config_file in matrix[ips[0]].keys():
+        for config_file in matrix[storagerouters[0]].keys():
             TestArakoon.validate_arakoon_config_content(config_file, node_ids)
 
-        assert len(ips) == len(matrix.keys()), "not all nodes have arakoon configs"
+        assert len(storagerouters) == len(matrix.keys()), "not all nodes have arakoon configs"
         incorrect_nodes = list()
-        for ip in matrix.keys():
-            is_master = pmachines[ip].storagerouters[0].node_type == 'MASTER'
-            if (is_master is True and len(matrix[ip]) != nr_of_configs_on_master) or\
-                    (is_master is False and len(matrix[ip]) != nr_of_configs_on_extra):
-                incorrect_nodes.append(ip)
+        for sr in matrix:
+            is_master = sr.node_type == 'MASTER'
+            if (is_master is True and len(matrix[sr]) != nr_of_configs_on_master) or\
+                    (is_master is False and len(matrix[sr]) != nr_of_configs_on_extra):
+                incorrect_nodes.append(sr.ip)
         assert len(incorrect_nodes) == 0, "Incorrect nr of configs on nodes: {0}".format(incorrect_nodes)
 
         md5sum_matrix = dict()
         incorrect_configs = list()
-        for cfg in matrix[ips[0]]:
-            for ip in ips:
+        for cfg in matrix[storagerouters[0]]:
+            for sr in storagerouters:
                 if cfg not in md5sum_matrix:
-                    md5sum_matrix[cfg] = matrix[ip][cfg]
-                elif matrix[ip][cfg] != md5sum_matrix[cfg]:
+                    md5sum_matrix[cfg] = matrix[sr][cfg]
+                elif matrix[sr][cfg] != md5sum_matrix[cfg]:
                     incorrect_configs.append("Incorrect contents {0} for {1} on {2}, expected {3}"
-                                             .format(matrix[ip][cfg], ip, cfg, md5sum_matrix[cfg]))
+                                             .format(matrix[sr][cfg], sr.ip, cfg, md5sum_matrix[cfg]))
 
         assert len(incorrect_configs) == 0, 'Incorrect arakoon config contents: \n{0}'.format('\n'.join(incorrect_configs))
 
@@ -245,51 +222,48 @@ class TestArakoon(object):
         if not len(storagerouters) >= 3:
             raise SkipTest('Environment has only {0} node(s)'.format(len(storagerouters)))
 
-        node_ips = [sr.ip for sr in storagerouters]
-        node_ips.sort()
-
         cluster_name = 'ar_0001'
         cluster_basedir = '/var/tmp/'
-        first_ip = node_ips[0]
-        second_ip = node_ips[1]
-        third_ip = node_ips[2]
-        first_root_client = SSHClient(first_ip, username='root')
-        second_root_client = SSHClient(second_ip, username='root')
-        third_root_client = SSHClient(third_ip, username='root')
+        first_sr = storagerouters[0]
+        second_sr = storagerouters[1]
+        third_sr = storagerouters[2]
+        first_root_client = SSHClient(first_sr, username='root')
+        second_root_client = SSHClient(second_sr, username='root')
+        third_root_client = SSHClient(third_sr, username='root')
 
         TestArakoon.logger.info('===================================================')
         TestArakoon.logger.info('setup and validate single node cluster')
-        ArakoonInstaller.create_cluster(cluster_name, ServiceType.ARAKOON_CLUSTER_TYPES.FWK, first_ip, cluster_basedir)
-        TestArakoon.validate_arakoon_config_files(TestArakoon.get_cluster_pmachines([first_ip]), cluster_name)
+        ArakoonInstaller.create_cluster(cluster_name, ServiceType.ARAKOON_CLUSTER_TYPES.FWK, first_sr.ip, cluster_basedir)
+        TestArakoon.validate_arakoon_config_files([first_sr], cluster_name)
         TestArakoon.verify_arakoon_structure(first_root_client, cluster_name, True, True)
 
         TestArakoon.logger.info('===================================================')
         TestArakoon.logger.info('setup and validate two node cluster')
-        ArakoonInstaller.extend_cluster(first_ip, second_ip, cluster_name, cluster_basedir)
-        TestArakoon.validate_arakoon_config_files(TestArakoon.get_cluster_pmachines([first_ip, second_ip]), cluster_name)
+        ArakoonInstaller.extend_cluster(first_sr.ip, second_sr.ip, cluster_name, cluster_basedir)
+        TestArakoon.validate_arakoon_config_files([first_sr, second_sr], cluster_name)
         TestArakoon.verify_arakoon_structure(first_root_client, cluster_name, True, True)
         TestArakoon.verify_arakoon_structure(second_root_client, cluster_name, True, True)
 
         TestArakoon.logger.info('===================================================')
         TestArakoon.logger.info('setup and validate three node cluster')
-        ArakoonInstaller.extend_cluster(first_ip, third_ip, cluster_name, cluster_basedir)
-        TestArakoon.validate_arakoon_config_files(TestArakoon.get_cluster_pmachines([first_ip, second_ip, third_ip]), cluster_name)
+        ArakoonInstaller.extend_cluster(first_sr.ip, third_sr.ip, cluster_name, cluster_basedir)
+        TestArakoon.validate_arakoon_config_files([first_sr, second_sr, third_sr], cluster_name)
 
         for client in [first_root_client, second_root_client, third_root_client]:
             TestArakoon.verify_arakoon_structure(client, cluster_name, True, True)
 
         TestArakoon.logger.info('===================================================')
         TestArakoon.logger.info('reduce and validate three node to two node cluster')
-        ArakoonInstaller.shrink_cluster(second_ip, cluster_name)
-        TestArakoon.validate_arakoon_config_files(TestArakoon.get_cluster_pmachines([first_ip, third_ip]), cluster_name)
+        ArakoonInstaller.shrink_cluster(second_sr.ip, cluster_name)
+        TestArakoon.validate_arakoon_config_files([first_sr, third_sr], cluster_name)
         TestArakoon.verify_arakoon_structure(first_root_client, cluster_name, True, True)
         TestArakoon.verify_arakoon_structure(second_root_client, cluster_name, True, False)
         TestArakoon.verify_arakoon_structure(third_root_client, cluster_name, True, True)
 
         TestArakoon.logger.info('===================================================')
         TestArakoon.logger.info('reduce and validate two node to one node cluster')
-        ArakoonInstaller.shrink_cluster(first_ip, cluster_name)
-        TestArakoon.validate_arakoon_config_files(TestArakoon.get_cluster_pmachines([third_ip]), cluster_name)
+        ArakoonInstaller.shrink_cluster(first_sr.ip, cluster_name)
+        TestArakoon.validate_arakoon_config_files([third_sr], cluster_name)
 
         TestArakoon.verify_arakoon_structure(first_root_client, cluster_name, True, False)
         TestArakoon.verify_arakoon_structure(second_root_client, cluster_name, True, False)
@@ -297,7 +271,7 @@ class TestArakoon(object):
 
         TestArakoon.logger.info('===================================================')
         TestArakoon.logger.info('remove cluster')
-        ArakoonInstaller.delete_cluster(cluster_name, third_ip)
+        ArakoonInstaller.delete_cluster(cluster_name, third_sr.ip)
 
         for client in [first_root_client, second_root_client, third_root_client]:
             TestArakoon.verify_arakoon_structure(client, cluster_name, False, False)
@@ -309,38 +283,19 @@ class TestArakoon(object):
         """
         Arakoon cluster validation
         """
-        storagerouters = GeneralStorageRouter.get_storage_routers()
-        if not len(storagerouters) >= 2:
-            raise SkipTest('Environment has only {0} node(s)'.format(len(storagerouters)))
-
-        pmachines = TestArakoon.get_cluster_pmachines([sr.ip for sr in storagerouters])
-        TestArakoon.validate_arakoon_config_files(pmachines)
-
-    @staticmethod
-    def ovs_3554_4_node_cluster_config_validation_test():
-        """
-        Arakoon config validation of a 4 node cluster
-        """
-        storagerouters = GeneralStorageRouter.get_storage_routers()
-        if not len(storagerouters) >= 4:
-            raise SkipTest('Environment has only {0} node(s)'.format(len(storagerouters)))
-
-        pmachines = TestArakoon.get_cluster_pmachines([sr.ip for sr in storagerouters])
-        TestArakoon.validate_arakoon_config_files(pmachines)
+        TestArakoon.validate_arakoon_config_files(GeneralStorageRouter.get_storage_routers())
 
     @staticmethod
     def ovs_3671_validate_archiving_of_existing_arakoon_data_on_create_test():
         """
         Validate arakoon archiving on extending a cluster with already existing data
         """
-        node_ips = [sr.ip for sr in GeneralStorageRouter.get_storage_routers()]
-        node_ips.sort()
+        first_sr = GeneralStorageRouter.get_storage_routers()[0]
 
         cluster_name = 'OVS_3671-single-node-cluster'
         cluster_basedir = '/var/tmp'
-        first_ip = node_ips[0]
 
-        root_client = SSHClient(first_ip, username='root')
+        root_client = SSHClient(first_sr, username='root')
         for directory in ['/'.join([cluster_basedir, 'arakoon']), '/var/log/arakoon']:
             root_client.dir_create(os.path.dirname(directory))
             root_client.dir_chmod(os.path.dirname(directory), 0755, recursive=True)
@@ -350,7 +305,7 @@ class TestArakoon(object):
                            '/'.join([cluster_basedir, 'arakoon', cluster_name, 'tlogs', 'one.tlog']),
                            '/'.join(['/var/log', 'arakoon', cluster_name, 'one.log'])]
 
-        client = SSHClient(first_ip, username='ovs')
+        client = SSHClient(first_sr, username='ovs')
         for filename in files_to_create:
             client.dir_create(os.path.dirname(filename))
             client.dir_chmod(os.path.dirname(filename), 0755, recursive=True)
@@ -364,8 +319,8 @@ class TestArakoon(object):
 
         TestArakoon.logger.info('===================================================')
         TestArakoon.logger.info('setup and validate single node cluster')
-        ArakoonInstaller.create_cluster(cluster_name, ServiceType.ARAKOON_CLUSTER_TYPES.FWK, first_ip, cluster_basedir)
-        TestArakoon.validate_arakoon_config_files(TestArakoon.get_cluster_pmachines([first_ip]), cluster_name)
+        ArakoonInstaller.create_cluster(cluster_name, ServiceType.ARAKOON_CLUSTER_TYPES.FWK, first_sr.ip, cluster_basedir)
+        TestArakoon.validate_arakoon_config_files([first_sr], cluster_name)
         TestArakoon.verify_arakoon_structure(root_client, cluster_name, True, True)
         TestArakoon.check_archived_directory(client, archived_files)
         for filename in files_to_create:
@@ -373,7 +328,7 @@ class TestArakoon(object):
 
         TestArakoon.logger.info('===================================================')
         TestArakoon.logger.info('remove cluster')
-        ArakoonInstaller.delete_cluster(cluster_name, first_ip)
+        ArakoonInstaller.delete_cluster(cluster_name, first_sr.ip)
         TestArakoon.check_archived_directory(client, archived_files)
         for filename in files_to_create:
             assert client.file_exists(filename) is False, 'File {0} is missing'.format(filename)
@@ -384,22 +339,18 @@ class TestArakoon(object):
         """
         Validate arakoon archiving when creating and extending an arakoon cluster
         """
-        node_ips = [sr.ip for sr in GeneralStorageRouter.get_storage_routers()]
-        node_ips.sort()
-        first_ip = node_ips[0]
-
-        if len(node_ips) < 2:
-            raise SkipTest('Environment has only {0} node(s)'.format(len(node_ips)))
+        storagerouters = GeneralStorageRouter.get_storage_routers()
+        storagerouters.sort(key=lambda k: k.ip)
+        if len(storagerouters) < 2:
+            raise SkipTest('Environment has only {0} node(s)'.format(len(storagerouters)))
 
         cluster_name = 'OVS_3671-multi-node-cluster'
         cluster_basedir = '/var/tmp'
-        ips_to_validate = []
 
         archived_files = []
         files_to_create = []
-        for ip in node_ips:
-            ips_to_validate.append(ip)
-            root_client = SSHClient(ip, username='root')
+        for index, sr in enumerate(storagerouters):
+            root_client = SSHClient(sr, username='root')
             for directory in ['/'.join([cluster_basedir, 'arakoon']), '/var/log/arakoon']:
                 root_client.dir_create(os.path.dirname(directory))
                 root_client.dir_chmod(os.path.dirname(directory), 0755, recursive=True)
@@ -409,7 +360,7 @@ class TestArakoon(object):
                                '/'.join([cluster_basedir, 'arakoon', cluster_name, 'tlogs', 'one.tlog']),
                                '/'.join(['/var/log', 'arakoon', cluster_name, 'one.log'])]
 
-            client = SSHClient(ip, username='ovs')
+            client = SSHClient(sr, username='ovs')
             for filename in files_to_create:
                 client.dir_create(os.path.dirname(filename))
                 client.dir_chmod(os.path.dirname(filename), 0755, recursive=True)
@@ -423,11 +374,11 @@ class TestArakoon(object):
 
             TestArakoon.logger.info('===================================================')
             TestArakoon.logger.info('setup and validate single node cluster')
-            if ip == first_ip:
-                ArakoonInstaller.create_cluster(cluster_name, ServiceType.ARAKOON_CLUSTER_TYPES.FWK, ip, cluster_basedir)
+            if index == 0:
+                ArakoonInstaller.create_cluster(cluster_name, ServiceType.ARAKOON_CLUSTER_TYPES.FWK, sr.ip, cluster_basedir)
             else:
-                ArakoonInstaller.extend_cluster(first_ip, ip, cluster_name, cluster_basedir)
-            TestArakoon.validate_arakoon_config_files(TestArakoon.get_cluster_pmachines(ips_to_validate), cluster_name)
+                ArakoonInstaller.extend_cluster(storagerouters[0].ip, sr.ip, cluster_name, cluster_basedir)
+            TestArakoon.validate_arakoon_config_files(storagerouters[:index + 1], cluster_name)
             TestArakoon.verify_arakoon_structure(root_client, cluster_name, True, True)
             TestArakoon.check_archived_directory(client, archived_files)
             for filename in files_to_create:
@@ -435,10 +386,10 @@ class TestArakoon(object):
 
         TestArakoon.logger.info('===================================================')
         TestArakoon.logger.info('remove cluster')
-        ArakoonInstaller.delete_cluster(cluster_name, first_ip)
+        ArakoonInstaller.delete_cluster(cluster_name, storagerouters[0].ip)
 
-        for ip in node_ips:
-            client = SSHClient(ip, username='ovs')
+        for sr in storagerouters:
+            client = SSHClient(sr, username='ovs')
             TestArakoon.check_archived_directory(client, archived_files)
             for filename in files_to_create:
                 assert client.file_exists(filename) is False, 'File {0} is missing'.format(filename)
